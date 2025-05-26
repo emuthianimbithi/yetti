@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="YETII Logo" width="250" style="border-radius: 20px;" />
+  <img src="logo.png" alt="YETII Logo" width="500" style="border-radius: 20px;" />
 </p>
 
 

@@ -90,8 +90,43 @@ pub fn initialize_yetii_config(config_name: &String, path : &String) -> Result<S
     let yaml_string = serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize YetiiConfig: {}", e))?;
     // Create the full path for the configuration file
     let full_path = format!("{}/{}", path, config_name);
-    // Write the YAML string to the specified file
-    std::fs::write(&full_path, yaml_string).map_err(|e| format!("Failed to write configuration file: {}", e))?;
+    // save the YAML string to the specified path
+    save_yaml_file(path, full_path.as_str(), &yaml_string)?;
+
     println!("Yetii configuration file created at: {}", full_path);
     Ok("Yetii configuration initialized successfully.".to_string())
+}
+
+use std::io::{self, Write};
+use std::path::Path;
+
+fn save_yaml_file(path: &str, full_path: &str, yaml_string: &str) -> Result<(), String> {
+    // Create directory if it doesn't exist
+    if !Path::new(path).exists() {
+        std::fs::create_dir_all(path)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
+
+    // Check if file exists
+    if Path::new(full_path).exists() {
+        // Prompt for overwrite
+        print!("File '{}' already exists. Overwrite? (y/N): ", full_path);
+        io::stdout().flush().map_err(|e| format!("Failed to flush stdout: {}", e))?;
+
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| format!("Failed to read user input: {}", e))?;
+
+        let input = input.trim().to_lowercase();
+        if input != "y" && input != "yes" {
+            return Err("Aborted by user.".into());
+        }
+    }
+
+    // Write YAML to file
+    std::fs::write(full_path, yaml_string)
+        .map_err(|e| format!("Failed to write configuration file: {}", e))?;
+
+    Ok(())
 }
