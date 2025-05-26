@@ -2,10 +2,10 @@ mod initialize;
 
 use crate::cli::{Commands, Yetii};
 use crate::utils;
-pub async fn going_through_commands(yetii: &Yetii){
+pub fn going_through_commands(yetii: &Yetii){
     match &yetii.commands {
         Commands::Init {config, path} => {
-            match initialize::initialize_yetii_config(config, path).await {
+            match initialize::initialize_yetii_config(config, path) {
                 Ok(message) => println!("{}", message),
                 Err(e) => eprintln!("Error initializing Yetii configuration: {}", e),
             }

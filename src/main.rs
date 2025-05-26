@@ -6,11 +6,10 @@ mod commands;
 mod database;
 mod config;
 
-#[tokio::main]
-async fn main() {
+fn main() {
     // going through the commands of yetii
     let yetii = cli::Yetii::parse();
 
     // going through yetii commands
-    commands::going_through_commands(&yetii).await;
+    commands::going_through_commands(&yetii);
 }

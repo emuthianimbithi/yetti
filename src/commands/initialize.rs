@@ -17,7 +17,7 @@ use std::error::Error;
 ///     Ok(_) => println!("Yetii configuration initialized successfully."),
 ///     Err(e) => eprintln!("Error initializing Yetii configuration: {}", e),
 ///}
-pub async fn initialize_yetii_config(config_name: &String, path : &String) -> Result<String,Box<dyn Error>> {
+pub fn initialize_yetii_config(config_name: &String, path : &String) -> Result<String,Box<dyn Error>> {
     let config = YetiiConfig {
         version: "0.0.1".to_string(),
         name: config_name.clone(),
@@ -65,13 +65,8 @@ pub async fn initialize_yetii_config(config_name: &String, path : &String) -> Re
                 endpoint: EndpointConfig {
                     url: "".to_string(),
                     method: "".to_string(),
-                    auth: EndpointAuth{
-                        auth_type: "none".to_string(),
-                        token: None,
-                        username: None,
-                        password: None,
-                        certificate: None,
-                    },
+                    auth: EndpointAuth::Bearer{
+                        token: "your_token_here".to_string(),},
                     headers: None,
                     request: RequestConfig {
                         batch_size: 0,

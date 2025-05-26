@@ -1,4 +1,9 @@
-# 🧊 Yetii CLI
+<p align="center">
+  <img src="logo.png" alt="YETII Logo" width="250" style="border-radius: 20px;" />
+</p>
+
+
+# 🧊 Yetii (YAML Enterprise Transformation & Integration Interface) CLI
 
 **Yetii** is a command-line tool built in Rust to help developers integrate ERP systems with flexible configuration management. It enables initializing config files and performing ODBC driver checks in preparation for querying various databases.
 

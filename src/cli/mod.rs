@@ -41,7 +41,7 @@ pub enum Commands{
         /// # Returns:
         /// - A success message if the initialization is successful.
         /// - An error message if the initialization fails.
-        #[clap(short, long, default_value = "yetii.config")]
+        #[clap(short, long, default_value = "yetii.yaml")]
         config: String,
 
         // path to the configuration file
