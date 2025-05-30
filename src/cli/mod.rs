@@ -31,20 +31,6 @@ pub enum Commands{
     ///- A success message if the initialization is successful.
     ///- An error message if the initialization fails.
     Init {
-        /// name of the config configuration file
-        /// This option allows you to specify a custom name for the configuration file.
-        /// # Example usage:
-        ///```
-        /// yetii init --config my_config.config
-        /// ```
-        /// This is useful for organizing multiple configurations or using a specific naming convention.
-        /// # Returns:
-        /// - A success message if the initialization is successful.
-        /// - An error message if the initialization fails.
-        #[clap(short, long, default_value = "yetii.yaml")]
-        config: String,
-
-        // path to the configuration file
         /// path to the configuration file
         /// This option allows you to specify the path where the configuration file will be created.
         /// # Example usage:
@@ -70,6 +56,50 @@ pub enum Commands{
     /// - A list of installed ODBC drivers if the check is successful.
     ///- An error message if the check fails.
     #[clap(name = "odbc")]
-    CheckExistingOdbc
+    CheckExistingOdbc,
+    /// Run Yetii
+    /// This command runs the Yetii application, executing the configured queries and operations.
+    /// # Example usage:
+    ///  ```
+    /// yetii run
+    /// This command is useful for executing the main functionality of Yetii after it has been initialized and configured.
+    /// # Returns:
+    /// - A success message if the application runs successfully.
+    /// - An error message if the application fails to run.
+
+    #[clap(name = "run")]
+    Run{
+        /// name of the query to run
+        /// This option allows you to specify a specific query to run.
+        /// # Example usage:
+        /// ```
+        /// yetii run --query my_query
+        /// ```
+        /// This is useful for executing a specific query without running all configured queries.
+        #[clap(short, long)]
+        query: Option<String>,
+
+        /// force the execution of the query even if it is not enabled
+        /// This flag allows you to force the execution of a query even if it is marked as disabled in the configuration.
+        /// # Example usage:
+        /// ```
+        /// yetii run --force
+        /// ```
+        #[clap(short, long)]
+        force: Option<bool>,
+    },
+    /// Check Yetii configuration
+    /// This command checks the Yetii configuration for validity and completeness.
+    /// It will validate the configuration file and ensure that all required settings are present.
+    /// # Example usage:
+    /// ```
+    /// yetii check-config
+    /// ```
+    /// This command is useful for verifying that the Yetii configuration is set up correctly before running any operations.
+    /// # Returns:
+    /// - A success message if the configuration is valid.
+    /// - An error message if the configuration is invalid or incomplete.
+    #[clap(name = "check-config")]
+    CheckConfig,
 }
 
