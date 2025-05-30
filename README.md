@@ -1,13 +1,16 @@
+Got it! Here’s an updated README draft for your **YETII** CLI project incorporating the info you shared, polished for clarity, formatting, and completeness:
+
+---
+
 <p align="center">
   <img src="logo.png" alt="YETII Logo" width="500" style="border-radius: 20px;" />
 </p>
 
-
 # 🧊 Yetii (YAML Enterprise Transformation & Integration Interface) CLI
 
-**Yetii** is a command-line tool built in Rust to help developers integrate ERP systems with flexible configuration management. It enables initializing config files and performing ODBC driver checks in preparation for querying various databases.
+**Yetii** is a Rust-based CLI tool designed to streamline ERP integration through flexible YAML-based configuration management. It helps developers initialize configuration files, verify ODBC drivers on the system, and eventually will support executing parameterized queries and API endpoints.
 
-> ⚠️ This is a work-in-progress tool. Features are still under development.
+> ⚠️ Work-in-progress — expect evolving features and improvements.
 
 ---
 
@@ -15,53 +18,90 @@
 
 ### ✅ `init` — Initialize Configuration
 
-Generate a starter Yetii configuration YAML file with default values.
+Create a starter YAML config file with default values for Yetii.
 
 **Usage:**
 
 ```bash
-  yetii init --config yetii.config --path .
+yetii init --path .
 ```
 
-* `--config`, `-c`: Name of the config file (default: `yetii.config`)
-* `--path`, `-p`: Target directory for the config file (default: current directory)
+* `--path, -p`: Directory where the config file is created (default: current directory).
 
-Creates a YAML file like this:
+This generates a config file (e.g., `yetii.config`) with content like:
 
 ```yaml
 version: "0.0.1"
 name: "yetii.config"
-...
+# ...
 ```
 
 ---
 
-### ✅ `odbc` — Check for Installed ODBC Drivers
+### ✅ `odbc` — Check Installed ODBC Drivers
 
-Lists ODBC drivers available on your system.
+Lists all ODBC drivers detected on your system.
 
 **Usage:**
 
 ```bash
-  yetii odbc
+yetii odbc
 ```
 
-Useful before trying to connect to databases using ODBC.
+Useful for confirming available database drivers before running queries.
 
 ---
 
-## 🔧 Building and Running
+### ✅ `run` — Run Queries
 
-### Build the project
+Executes queries as configured (placeholder implementation currently).
+
+**Usage:**
 
 ```bash
-  cargo build
+yetii run --query my_query --force
 ```
 
-### Run the CLI
+* `--query, -q`: (Optional) Name of a specific query to run.
+* `--force, -f`: (Optional) Force execution even if query is disabled.
+
+Currently this also runs an ODBC check and config validation.
+
+---
+
+### ✅ `check-config` — Validate Configuration
+
+Verifies the Yetii YAML config file for correctness.
+
+**Usage:**
 
 ```bash
-  cargo run -- <COMMAND>
+yetii check-config
+```
+
+---
+
+## 🔧 Build and Run
+
+### Build
+
+```bash
+cargo build
+```
+
+### Run CLI commands
+
+```bash
+cargo run -- <COMMAND>
+```
+
+Examples:
+
+```bash
+cargo run -- init --path .
+cargo run -- odbc
+cargo run -- run --query my_query
+cargo run -- check-config
 ```
 
 ---
@@ -70,11 +110,11 @@ Useful before trying to connect to databases using ODBC.
 
 * [x] Config initialization
 * [x] ODBC environment check
-* [ ] Load and parse full YAML config
+* [ ] Load & parse full YAML config
 * [ ] Execute parameterized SQL queries
-* [ ] API endpoint delivery (POST/PUT)
-* [ ] Error handling and monitoring
-* [ ] Config validation + schema
+* [ ] API endpoint integration (POST/PUT)
+* [ ] Error handling & monitoring
+* [ ] Config validation & schema enforcement
 
 ---
 
@@ -84,9 +124,12 @@ MIT © 2025 Emmanuel Muthiani
 
 ---
 
-## 🧪 Dev Notes
+## 🧪 Development Notes
 
-This tool uses the [`clap`](https://docs.rs/clap/latest/clap/) crate for CLI parsing and `serde_yaml` for config serialization.
+Uses:
+
+* [`clap`](https://docs.rs/clap/latest/clap/) for CLI argument parsing
+* [`serde_yaml`](https://docs.rs/serde_yaml/latest/serde_yaml/) for YAML config serialization/deserialization
 
 ```rust
 use clap::{Parser, Subcommand};
@@ -97,4 +140,8 @@ use serde::{Deserialize, Serialize};
 
 ## 🤝 Contributing
 
-This is an internal project for now. Open to external feedback soon.
+Currently an internal project; feedback and contributions welcome in future updates.
+
+---
+
+If you want, I can also help you generate a full markdown file or a GitHub-flavored README with badges, usage examples, or more detailed instructions! Would you like that?
