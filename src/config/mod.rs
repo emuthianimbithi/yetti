@@ -134,7 +134,7 @@ pub fn get_config() -> Result<std::sync::RwLockReadGuard<'static, yetii::YetiiCo
 /// Get a read guard to the global configuration (unsafe version for internal use)
 /// Panics if config is not initialized or lock is poisoned
 
-
+#[allow(unused)]
 pub(crate) fn get_config_unchecked() -> std::sync::RwLockReadGuard<'static, yetii::YetiiConfig> {
     CONFIG
         .get()
@@ -159,6 +159,7 @@ pub fn validate_config(config: &yetii::YetiiConfig) -> Result<(), ConfigError> {
         return Err(ConfigError::MissingRequiredField("databases.database".to_string()));
     }
 
+    #[allow(unused_comparisons)]
     // Validate port range
     if config.databases.port == 0 || config.databases.port > 65535 {
         return Err(ConfigError::MissingRequiredField("databases.port must be between 1 and 65535".to_string()));

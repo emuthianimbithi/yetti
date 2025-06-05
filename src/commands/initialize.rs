@@ -40,13 +40,48 @@ pub fn initialize_yetii_config(config_name: &str, path: &String) -> Result<Strin
     let yaml_content = generate_commented_yaml(&config)?;
 
     // Create the full path for the configuration file
-    let full_path = format!("{}/{}", path, config_name);
+    let full_path = Path::new(path).join(config_name);
+    let full_path_str = full_path.to_string_lossy();
 
     // Save the YAML string to the specified path
-    save_yaml_file(path, full_path.as_str(), &yaml_content)?;
+    save_yaml_file_simple(&full_path_str, &yaml_content)?;
 
-    println!("Yetii configuration file created at: {}", full_path);
+    println!("Yetii configuration file created at: {}", full_path_str);
     Ok("Yetii configuration initialized successfully.".to_string())
+}
+
+fn save_yaml_file_simple(full_path: &str, yaml_string: &str) -> Result<(), String> {
+    let file_path = Path::new(full_path);
+
+    // Create parent directory if it doesn't exist
+    if let Some(parent_dir) = file_path.parent() {
+        if !parent_dir.exists() {
+            std::fs::create_dir_all(parent_dir)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+    }
+
+    // Check if file exists and prompt for overwrite
+    if file_path.exists() {
+        print!("File '{}' already exists. Overwrite? (y/N): ", full_path);
+        io::stdout().flush().map_err(|e| format!("Failed to flush stdout: {}", e))?;
+
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| format!("Failed to read user input: {}", e))?;
+
+        let input = input.trim().to_lowercase();
+        if input != "y" && input != "yes" {
+            return Err("Aborted by user.".into());
+        }
+    }
+
+    // Write YAML to file
+    std::fs::write(full_path, yaml_string)
+        .map_err(|e| format!("Failed to write configuration file: {}", e))?;
+
+    Ok(())
 }
 fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error>> {
     let mut query_parameters = HashMap::new();

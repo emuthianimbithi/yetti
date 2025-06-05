@@ -6,6 +6,7 @@ mod config;
 use notify::{Watcher, RecursiveMode, Config, RecommendedWatcher, EventKind};
 use std::sync::mpsc::channel;
 use std::thread;
+
 fn watch_config_file(path: String) {
     thread::spawn(move || {
         let (tx, rx) = channel();
@@ -25,23 +26,31 @@ fn watch_config_file(path: String) {
         }
     });
 }
+
 fn main() {
-    // going through the commands of yetii
     let yetii = cli::Yetii::parse();
 
+    // Handle init command separately since it doesn't need existing config
+    if matches!(yetii.commands, cli::Commands::Init { .. }) {
+        commands::going_through_commands(&yetii);
+        return;
+    }
+
+    // For all other commands, load and validate config
     if let Err(e) = config::load_config_once(&yetii.file) {
         eprintln!("❌ Failed to load config: {}", e);
         std::process::exit(1);
     }
 
-    // check if config initialized
     if !config::is_config_initialized() {
         eprintln!("❌ Yetii configuration is not initialized. Please run `yetii init` first.");
         std::process::exit(1);
     }
 
-    watch_config_file(yetii.file.clone()); // 🧠 start watching here
+    // Only start file watcher for the `run` command (assuming it's long-running)
+    if matches!(yetii.commands, cli::Commands::Run { .. }) {
+        watch_config_file(yetii.file.clone());
+    }
 
-    // going through yetii commands
     commands::going_through_commands(&yetii);
 }

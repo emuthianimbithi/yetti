@@ -11,7 +11,11 @@ pub fn going_through_commands(yetii: &Yetii){
 
     match &yetii.commands {
         Commands::Init{ path} => {
-            match initialize::initialize_yetii_config("", path) {
+            let config_name = std::path::Path::new(&yetii.file)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("yetii.yaml");
+            match initialize::initialize_yetii_config(config_name, path) {
                 Ok(message) => println!("{}", message),
                 Err(e) => eprintln!("Error initializing Yetii configuration: {}", e),
             }
@@ -23,18 +27,9 @@ pub fn going_through_commands(yetii: &Yetii){
             }
         }
         Commands::Run { query: _query,force: _force }=> {
-           match odbc::check_odbc_drivers(){
-                Ok(output) => println!("ODBC Drivers found:\n{}", output),
-                Err(e) => eprintln!("Error checking ODBC drivers: {}", e),
-            }
-            match config::get_config() {
-                Ok(cfg) => {
-                    match config::validate_config(&cfg) {
-                        Ok(_) => println!("Yetii configuration is valid."),
-                        Err(e) => eprintln!("Error validating Yetii configuration: {}", e),
-                    }
-                }
-                Err(e) => eprintln!("Error accessing configuration: {}", e),
+            match run::run() {
+                Ok(output) => println!("Run completed successfully:\n{}", output),
+                Err(e) => eprintln!("Error running Yetii: {}", e),
             }
         }
         Commands::CheckConfig=> {

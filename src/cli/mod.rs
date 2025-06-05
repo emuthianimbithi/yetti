@@ -3,8 +3,10 @@ use clap::{Parser,Subcommand};
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 pub struct Yetii {
-    #[arg(short, long, global = true, default_value = "yetii.yaml")]
+    #[arg(global = true, long, short = 'c', default_value = "yetii.yaml")]
     pub file: String,
+    #[arg(global = true, long, short = 'v', action = clap::ArgAction::SetTrue)]
+    pub verbose: bool,
     #[clap(subcommand)]
     pub commands: Commands,
 }
