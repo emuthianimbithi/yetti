@@ -1,6 +1,7 @@
+use crate::config::database::DatabaseConfig;
+
 mod postgres;
 
-use crate::config::DatabaseConfig;
 
 /// Database trait to be used for all configured databases on Yetii
 #[allow(unused)]

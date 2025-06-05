@@ -1,18 +1,23 @@
 /// The creation of this file was inspired by the `cargo init` command.
-use crate::config::{
-    YetiiConfig, DatabaseConfig, DatabaseType, GlobalSettings, ErrorHandling,
-    ExecutionConfig, Logging, QueryConfig, SqlQuery, TransformConfig,
-    EndpointConfig, RequestConfig, EndpointAuth, AuthConfig, ConnectionConfig,
-    SecuritySettings, LogRotation, ScheduleConfig, QueryValidation, DataFilter,
-    DataConversion, ResponseConfig, StateManagement, SchedulerConfig,
-    MonitoringConfig, MetricsConfig, HealthCheckConfig, NotificationSettings,
-    NotificationChannel, QueryParameter
-};
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{self, Write};
 use std::path::Path;
-
+use crate::config::connection_config::ConnectionConfig;
+use crate::config::database::{AuthConfig, DatabaseConfig, DatabaseType};
+use crate::config::endpoint_config::{EndpointAuth, EndpointConfig, ResponseConfig};
+use crate::config::error_handling::ErrorHandling;
+use crate::config::execution_config::{ExecutionConfig, SchedulerConfig, StateManagement};
+use crate::config::global_settings::{GlobalSettings, Logging};
+use crate::config::logging::LogRotation;
+use crate::config::monitor_config::{HealthCheckConfig, MetricsConfig, MonitoringConfig, NotificationChannel, NotificationSettings};
+use crate::config::query_config::QueryConfig;
+use crate::config::request_config::RequestConfig;
+use crate::config::schedule_config::ScheduleConfig;
+use crate::config::security_settings::SecuritySettings;
+use crate::config::sql_query::{QueryParameter, QueryValidation, SqlQuery};
+use crate::config::transform_config::{DataConversion, DataFilter, TransformConfig};
+use crate::config::yetii::YetiiConfig;
 /// Initializes the Yetii configuration file with default values and helpful comments.
 /// # Arguments
 /// * `config_name`: The name of the configuration file to be created.
@@ -43,7 +48,6 @@ pub fn initialize_yetii_config(config_name: &str, path: &String) -> Result<Strin
     println!("Yetii configuration file created at: {}", full_path);
     Ok("Yetii configuration initialized successfully.".to_string())
 }
-
 fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error>> {
     let mut query_parameters = HashMap::new();
     query_parameters.insert("last_run_time".to_string(), QueryParameter {
@@ -212,7 +216,6 @@ fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error
 
     Ok(config)
 }
-
 fn generate_commented_yaml(config: &YetiiConfig) -> Result<String, Box<dyn Error>> {
     let yaml = serde_yaml::to_string(config)?;
 
@@ -261,7 +264,6 @@ fn generate_commented_yaml(config: &YetiiConfig) -> Result<String, Box<dyn Error
 
     Ok(commented_yaml)
 }
-
 fn save_yaml_file(path: &str, full_path: &str, yaml_string: &str) -> Result<(), String> {
     // Create directory if it doesn't exist
     if !Path::new(path).exists() {

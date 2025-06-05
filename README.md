@@ -1,20 +1,16 @@
-Got it! Here’s an updated README draft for your **YETII** CLI project incorporating the info you shared, polished for clarity, formatting, and completeness:
-
----
-
 <p align="center">
   <img src="logo.png" alt="YETII Logo" width="500" style="border-radius: 20px;" />
 </p>
 
 # 🧊 Yetii (YAML Enterprise Transformation & Integration Interface) CLI
 
-**Yetii** is a Rust-based CLI tool designed to streamline ERP integration through flexible YAML-based configuration management. It helps developers initialize configuration files, verify ODBC drivers on the system, and eventually will support executing parameterized queries and API endpoints.
+**Yetii** is a Rust-based CLI tool designed to streamline ERP integration through flexible YAML-based configuration management. It helps developers initialize configuration files, verify ODBC drivers on the system, validate configurations, and execute parameterized queries.
 
 > ⚠️ Work-in-progress — expect evolving features and improvements.
 
 ---
 
-## 🚀 Current Features
+## 🚀 Features
 
 ### ✅ `init` — Initialize Configuration
 
@@ -26,21 +22,16 @@ Create a starter YAML config file with default values for Yetii.
 yetii init --path .
 ```
 
-* `--path, -p`: Directory where the config file is created (default: current directory).
+**Options:**
+* `--path, -p`: Directory where the config file is created (default: current directory)
 
-This generates a config file (e.g., `yetii.config`) with content like:
-
-```yaml
-version: "0.0.1"
-name: "yetii.config"
-# ...
-```
+This generates a `yetii.yaml` config file with default structure and settings.
 
 ---
 
 ### ✅ `odbc` — Check Installed ODBC Drivers
 
-Lists all ODBC drivers detected on your system.
+Lists all ODBC drivers detected on your system to ensure database connectivity prerequisites are met.
 
 **Usage:**
 
@@ -48,30 +39,36 @@ Lists all ODBC drivers detected on your system.
 yetii odbc
 ```
 
-Useful for confirming available database drivers before running queries.
+**Output:**
+- Lists all available ODBC drivers
+- Useful for confirming database drivers before running queries
 
 ---
 
-### ✅ `run` — Run Queries
+### ✅ `run` — Execute Queries
 
-Executes queries as configured (placeholder implementation currently).
+Runs the Yetii application with configured queries and operations.
 
 **Usage:**
 
 ```bash
-yetii run --query my_query --force
+yetii run [OPTIONS]
 ```
 
-* `--query, -q`: (Optional) Name of a specific query to run.
-* `--force, -f`: (Optional) Force execution even if query is disabled.
+**Options:**
+* `--query, -q <QUERY>`: (Optional) Name of a specific query to run
+* `--force, -f`: (Optional) Force execution even if query is disabled in configuration
 
-Currently this also runs an ODBC check and config validation.
+**Current behavior:**
+- Performs ODBC driver check
+- Validates configuration file
+- Prepares for query execution (implementation in progress)
 
 ---
 
 ### ✅ `check-config` — Validate Configuration
 
-Verifies the Yetii YAML config file for correctness.
+Validates the Yetii YAML configuration file for correctness and completeness.
 
 **Usage:**
 
@@ -79,42 +76,175 @@ Verifies the Yetii YAML config file for correctness.
 yetii check-config
 ```
 
+**Output:**
+- ✅ Success message if configuration is valid
+- ❌ Detailed error messages if configuration issues are found
+
 ---
 
-## 🔧 Build and Run
+## 🔧 Installation & Usage
 
-### Build
+### Prerequisites
 
-```bash
-cargo build
-```
+- Rust toolchain installed
+- ODBC drivers for your target databases (optional, for database operations)
 
-### Run CLI commands
-
-```bash
-cargo run -- <COMMAND>
-```
-
-Examples:
+### Build from Source
 
 ```bash
-cargo run -- init --path .
-cargo run -- odbc
-cargo run -- run --query my_query
-cargo run -- check-config
+git clone <repository-url>
+cd yetii
+cargo build --release
 ```
+
+### Global Configuration
+
+Yetii uses a global configuration file specified via the `--file` flag:
+
+```bash
+yetii --file custom-config.yaml <COMMAND>
+```
+
+**Default:** `yetii.yaml` in the current directory
+
+### Example Workflow
+
+```bash
+# 1. Initialize a new Yetii project
+yetii init --path ./my-project
+
+# 2. Check available ODBC drivers
+yetii odbc
+
+# 3. Validate your configuration
+yetii check-config
+
+# 4. Run all configured queries
+yetii run
+
+# 5. Run specific query with force flag
+yetii run --query my_query --force
+```
+
+---
+
+## 📋 Configuration File Structure
+
+The `yetii.yaml` configuration file structure includes:
+
+```yaml
+version: "0.0.1"
+name: "yetii.config"
+# Additional configuration options...
+```
+
+Configuration validation ensures:
+- Required fields are present
+- Data types are correct
+- Query definitions are properly structured
+- Database connections are configured
+
+---
+
+## 🏗️ Architecture
+
+Yetii is built with a modular architecture:
+
+```
+yetii/
+├── Cargo.toml              # Project dependencies and metadata
+├── Cargo.lock              # Dependency lock file
+├── README.md               # Project documentation
+├── logo.png                # Project logo
+└── src/
+    ├── main.rs             # Application entry point
+    ├── cli/                # CLI argument parsing and command definitions
+    │   └── mod.rs
+    ├── commands/           # Command implementations
+    │   ├── mod.rs
+    │   ├── initialize.rs   # Config initialization logic
+    │   ├── odbc.rs         # ODBC driver checking
+    │   └── run.rs          # Query execution logic
+    ├── config/             # Configuration management
+    │   └── mod.rs
+    └── database/           # Database connectivity layer
+        ├── mod.rs
+        └── postgres.rs     # PostgreSQL specific implementation
+```
+
+**Key Components:**
+- **CLI Module**: Command-line interface built with [`clap`](https://docs.rs/clap/)
+- **Commands Module**: Individual command implementations (init, odbc, run, check-config)
+- **Config Module**: YAML configuration management with [`serde_yaml`](https://docs.rs/serde_yaml/)
+- **Database Module**: Database connectivity layer with PostgreSQL support
+- **ODBC Integration**: System ODBC driver detection and validation
 
 ---
 
 ## 📅 Roadmap
 
-* [x] Config initialization
-* [x] ODBC environment check
-* [ ] Load & parse full YAML config
-* [ ] Execute parameterized SQL queries
+### Current Status
+* [x] CLI interface with clap
+* [x] Config file initialization
+* [x] ODBC environment checking
+* [x] Configuration validation
+* [x] Command structure foundation
+
+### Upcoming Features
+* [ ] Full YAML config parsing and loading
+* [ ] PostgreSQL query execution via dedicated database module
+* [ ] Parameterized SQL query execution
+* [ ] Multi-database support (expanding from PostgreSQL base)
+* [ ] Database connection pooling and management
 * [ ] API endpoint integration (POST/PUT)
-* [ ] Error handling & monitoring
-* [ ] Config validation & schema enforcement
+* [ ] Query result processing and transformation
+* [ ] Error handling and logging improvements
+* [ ] Configuration schema documentation
+* [ ] Test suite expansion
+
+---
+
+## 🧪 Development
+
+### Running Commands in Development
+
+```bash
+# Run with cargo
+cargo run -- init --path .
+cargo run -- odbc
+cargo run -- run --query my_query
+cargo run -- check-config
+
+# With custom config file
+cargo run -- --file custom.yaml check-config
+```
+
+### Testing
+
+```bash
+cargo test
+```
+
+---
+
+## 🐛 Error Handling
+
+Yetii provides clear error messages for common issues:
+
+- **Configuration errors**: Detailed validation messages with line numbers
+- **ODBC issues**: Clear driver availability reporting
+- **File system errors**: Helpful messages for path and permission issues
+- **Command errors**: Usage hints and suggestions
+
+---
+
+## 🤝 Contributing
+
+Currently an internal project. Future contributions welcome for:
+- Additional database driver support
+- Query optimization features
+- Configuration schema enhancements
+- Documentation improvements
 
 ---
 
@@ -124,24 +254,10 @@ MIT © 2025 Emmanuel Muthiani
 
 ---
 
-## 🧪 Development Notes
+## 🆘 Support
 
-Uses:
-
-* [`clap`](https://docs.rs/clap/latest/clap/) for CLI argument parsing
-* [`serde_yaml`](https://docs.rs/serde_yaml/latest/serde_yaml/) for YAML config serialization/deserialization
-
-```rust
-use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
-```
-
----
-
-## 🤝 Contributing
-
-Currently an internal project; feedback and contributions welcome in future updates.
-
----
-
-If you want, I can also help you generate a full markdown file or a GitHub-flavored README with badges, usage examples, or more detailed instructions! Would you like that?
+For issues or questions:
+1. Check the configuration validation output: `yetii check-config`
+2. Verify ODBC drivers: `yetii odbc`
+3. Review the generated config file structure
+4. Ensure proper file permissions for config directory

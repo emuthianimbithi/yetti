@@ -1,12 +1,14 @@
 mod initialize;
 mod odbc;
 mod run;
-
 use crate::cli::{Commands, Yetii};
 use crate::{config};
-use crate::config::CONFIG;
-
 pub fn going_through_commands(yetii: &Yetii){
+// This function processes the commands provided by the user through the Yetii CLI.
+// It matches the command and executes the corresponding functionality.
+// Each command has its own logic and can interact with the Yetii application in different ways.
+    // first init the config file
+
     match &yetii.commands {
         Commands::Init{ path} => {
             match initialize::initialize_yetii_config("", path) {
@@ -25,13 +27,13 @@ pub fn going_through_commands(yetii: &Yetii){
                 Ok(output) => println!("ODBC Drivers found:\n{}", output),
                 Err(e) => eprintln!("Error checking ODBC drivers: {}", e),
             }
-            match config::YetiiConfig::validate(&CONFIG.read().expect("CONFIG lock poisoned")) {
+            match config::yetii::YetiiConfig::validate(&config::get_config()) {
                 Ok(_) => println!("Yetii configuration is valid."),
                 Err(e) => eprintln!("Error validating Yetii configuration: {}", e),
             }
         }
         Commands::CheckConfig=> {
-            match config::YetiiConfig::validate(&CONFIG.read().expect("CONFIG lock poisoned")) {
+            match config::yetii::YetiiConfig::validate(&config::get_config()) {
                 Ok(_) => println!("✅ Yetii configuration file is valid."),
                 Err(e) => eprintln!("❌❌Error validating Yetii configuration file: {}❌❌", e),
             }

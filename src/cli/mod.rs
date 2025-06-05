@@ -3,6 +3,8 @@ use clap::{Parser,Subcommand};
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 pub struct Yetii {
+    #[arg(short, long, global = true, default_value = "yetii.yaml")]
+    pub file: String,
     #[clap(subcommand)]
     pub commands: Commands,
 }
@@ -10,15 +12,23 @@ pub struct Yetii {
 #[derive(Subcommand)]
 /// Yetii CLI commands
 /// This module defines the commands available in the Yetii CLI.
-/// Each command is documented with its purpose, usage examples, and expected outcomes.
+/// Each command has its own functionality and can be used to interact with the Yetii application.
 /// # Commands:
-/// - `init`: Initializes the Yetii application.
-/// - `odbc`: Checks for existing ODBC drivers on the system.
+///- `init`: Initializes the Yetii application.
+/// - `odbc`: Checks for existing ODBC drivers.
+/// - `run`: Runs the Yetii application with specified queries.
+/// - `check-config`: Validates the Yetii configuration.
 /// # Example usage:
 /// ```
-/// yetii init --config my_config.config
+/// yetii init --path /path/to/config
 /// yetii odbc
-/// This module provides a structured way to manage Yetii's functionality through the command line interface.
+/// yetii run --query my_query --force
+/// yetii check-config
+/// This module provides a structured way to manage Yetii's functionality through the command line.
+/// Each command can be executed with specific options and flags to customize its behavior.
+/// # Returns:
+/// - A success message if the command executes successfully.
+/// - An error message if the command fails or encounters issues.
 pub enum Commands{
     /// Initialize Yetii
     /// This command initializes the Yetii application, setting up the necessary configuration files and directories.
