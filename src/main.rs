@@ -18,7 +18,8 @@ fn watch_config_file(path: String) {
         while let Ok(event) = rx.recv() {
             if let Ok(e) = event {
                 if matches!(e.kind, EventKind::Modify(_)) {
-                    crate::config::reload_config(&path);
+                    config::reload_config(&path).
+                        expect("Failed to reload config");
                 }
             }
         }
@@ -30,6 +31,12 @@ fn main() {
 
     if let Err(e) = config::load_config_once(&yetii.file) {
         eprintln!("❌ Failed to load config: {}", e);
+        std::process::exit(1);
+    }
+
+    // check if config initialized
+    if !config::is_config_initialized() {
+        eprintln!("❌ Yetii configuration is not initialized. Please run `yetii init` first.");
         std::process::exit(1);
     }
 

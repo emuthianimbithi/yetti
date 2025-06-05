@@ -27,15 +27,25 @@ pub fn going_through_commands(yetii: &Yetii){
                 Ok(output) => println!("ODBC Drivers found:\n{}", output),
                 Err(e) => eprintln!("Error checking ODBC drivers: {}", e),
             }
-            match config::yetii::YetiiConfig::validate(&config::get_config()) {
-                Ok(_) => println!("Yetii configuration is valid."),
-                Err(e) => eprintln!("Error validating Yetii configuration: {}", e),
+            match config::get_config() {
+                Ok(cfg) => {
+                    match config::validate_config(&cfg) {
+                        Ok(_) => println!("Yetii configuration is valid."),
+                        Err(e) => eprintln!("Error validating Yetii configuration: {}", e),
+                    }
+                }
+                Err(e) => eprintln!("Error accessing configuration: {}", e),
             }
         }
         Commands::CheckConfig=> {
-            match config::yetii::YetiiConfig::validate(&config::get_config()) {
-                Ok(_) => println!("✅ Yetii configuration file is valid."),
-                Err(e) => eprintln!("❌❌Error validating Yetii configuration file: {}❌❌", e),
+            match config::get_config() {
+                Ok(cfg) => {
+                    match config::yetii::YetiiConfig::validate(&cfg) {
+                        Ok(_) => println!("✅ Yetii configuration file is valid."),
+                        Err(e) => eprintln!("❌❌Error validating Yetii configuration file: {}❌❌", e),
+                    }
+                }
+                Err(e) => eprintln!("Error accessing configuration: {}", e),
             }
         }
     }
