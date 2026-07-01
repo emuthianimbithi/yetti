@@ -89,7 +89,7 @@ yetii run [OPTIONS]
 - Retries transient HTTP failures using configured fixed or exponential backoff
 - Resolves incremental parameters from a JSON state file and advances state only after successful delivery
 - Validates configured HTTP success status codes
-- Emits structured JSON logs and a `rows_read`, `batches_sent`, and `failures` summary
+- Emits structured JSON logs and a `rows_read`, `pages_read`, `batches_sent`, and `failures` summary
 
 ---
 
@@ -118,7 +118,38 @@ yetii daemon status --pid-file .yetii/yetii.pid
 yetii daemon stop --pid-file .yetii/yetii.pid
 ```
 
-The daemon uses `execution.scheduler.max_concurrent_jobs` as a concurrency limit. Currently `missed_job_policy` must be `skip`.
+The daemon uses `execution.scheduler.max_concurrent_jobs` as a concurrency limit and skips a scheduled execution when the same query is already running. Currently `missed_job_policy` must be `skip`.
+
+Ctrl+C and `SIGTERM` initiate graceful shutdown: new schedules stop, active jobs finish, monitoring stops, and the PID file is removed. `daemon status` also removes stale PID files.
+
+#### Health, metrics, and alerts
+
+When monitoring is enabled, daemon mode exposes the configured pull endpoints:
+
+```yaml
+monitoring:
+  enabled: true
+  health_check:
+    enabled: true
+    endpoint: /health
+    port: 8080
+  metrics:
+    enabled: true
+    endpoint: http://127.0.0.1:9090/metrics
+    interval_seconds: 30
+  notifications:
+    on_failure: true
+    on_success: false
+    channels:
+      - type: webhook
+        url: ${FAILURE_WEBHOOK_URL}
+```
+
+`/health` returns `200` only after the scheduler is ready and returns `503` during startup or shutdown. `/metrics` uses Prometheus text format and reports active queries, runs, failures, rows, pages, batches, HTTP retries, overlap skips, and per-query status.
+
+Metrics are served on demand; `interval_seconds` is retained for configuration compatibility and does not control Prometheus scraping.
+
+Webhook notifications receive a JSON run summary. Email channels are validated but not delivered yet because the current email configuration does not include the authentication, sender, port, or TLS settings required for safe SMTP delivery.
 
 ---
 
@@ -271,6 +302,17 @@ execution:
     max_concurrent_jobs: 2
     job_timeout_minutes: 30
     missed_job_policy: skip
+
+monitoring:
+  enabled: true
+  health_check:
+    enabled: true
+    endpoint: /health
+    port: 8080
+  metrics:
+    enabled: true
+    endpoint: http://127.0.0.1:9090/metrics
+    interval_seconds: 30
 ```
 
 Configuration validation ensures:
@@ -393,6 +435,7 @@ yetii/
     ├── config/             # Configuration management
     ├── database/           # ODBC connectivity, parameters, and typed extraction
     ├── http/               # HTTP delivery and retry logic
+    ├── monitoring/         # Health, Prometheus metrics, and webhook alerts
     ├── state/              # Incremental run state and backup rotation
     └── transform/          # Row filtering, conversions, and mappings
 ```
@@ -403,6 +446,7 @@ yetii/
 - **Config Module**: YAML configuration management with [`serde_yaml`](https://docs.rs/serde_yaml/)
 - **Database Module**: ODBC connectivity with connection-string generation, bound parameters, typed extraction, and run-scoped connection reuse
 - **HTTP Module**: Batched JSON delivery with authentication, OAuth2 token management, success-code validation, and retry/backoff handling
+- **Monitoring Module**: Health/readiness serving, Prometheus metrics, and webhook notifications
 - **State Module**: JSON state-file loading, backup rotation, and incremental parameter watermarks
 - **Transform Module**: Row-level filters, simple type conversions, and field mappings
 - **ODBC Integration**: System ODBC driver detection and validation
@@ -431,6 +475,9 @@ yetii/
 * [x] Multi-database configuration and per-database query grouping
 * [x] Scheduler daemon with foreground and detached modes
 * [x] State-file backed incremental parameters
+* [x] Composite cursor pagination
+* [x] Health, Prometheus metrics, and webhook failure notifications
+* [x] Graceful daemon shutdown and overlap prevention
 
 ### Upcoming Features
 * [ ] Full connection pooling and concurrent worker model

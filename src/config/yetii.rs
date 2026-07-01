@@ -80,6 +80,9 @@ impl YetiiConfig {
 
         // Validate execution config
         self.execution.validate()?;
+        if let Some(monitoring) = &self.monitoring {
+            monitoring.validate()?;
+        }
 
         Ok(())
     }

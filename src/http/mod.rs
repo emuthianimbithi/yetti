@@ -68,6 +68,7 @@ impl HttpSender {
                     if retry_index < self.retry_policy.max_retries && error.is_retryable() =>
                 {
                     retry_index += 1;
+                    crate::monitoring::record_http_retry();
                     let delay = self.retry_policy.delay_for_retry(retry_index);
                     tracing::warn!(
                         retry = retry_index,

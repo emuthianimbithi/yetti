@@ -2,6 +2,7 @@ use crate::config;
 use crate::config::query_config::QueryConfig;
 use crate::database::{self, QueryRequest};
 use crate::http::HttpSender;
+use crate::monitoring::{self, NotificationEvent};
 use crate::state::{self, StateStore, WatermarkUpdate, YetiiState};
 use crate::transform;
 use anyhow::{Context, Result, anyhow, bail};
@@ -10,6 +11,7 @@ use serde_json::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
+use std::time::Instant;
 
 struct DeliveryOutcome {
     rows_read: usize,
@@ -20,6 +22,7 @@ struct DeliveryOutcome {
 #[derive(Debug, Default)]
 pub struct RunReport {
     pub rows_read: usize,
+    pub pages_read: usize,
     pub batches_sent: usize,
     pub failures: Vec<RunFailure>,
 }
@@ -34,8 +37,9 @@ impl fmt::Display for RunReport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "rows_read={} batches_sent={} failures={}",
+            "rows_read={} pages_read={} batches_sent={} failures={}",
             self.rows_read,
+            self.pages_read,
             self.batches_sent,
             self.failures.len()
         )
@@ -65,6 +69,11 @@ pub async fn run(query_name: Option<&str>, force: bool) -> Result<RunReport> {
     let mut sessions = HashMap::new();
 
     for query in selected_queries {
+        let started = Instant::now();
+        let initial_rows = report.rows_read;
+        let initial_pages = report.pages_read;
+        let initial_batches = report.batches_sent;
+        monitoring::query_started(&query.name);
         let database_config = resolve_database(&config.databases, query)?;
         if !sessions.contains_key(&database_config.name) {
             match database::open_session(database_config).await {
@@ -76,6 +85,17 @@ pub async fn run(query_name: Option<&str>, force: bool) -> Result<RunReport> {
                         query: query.name.clone(),
                         error: format!("database connection failed: {error}"),
                     });
+                    record_query_outcome(
+                        config.monitoring.as_ref(),
+                        query,
+                        false,
+                        &error.to_string(),
+                        0,
+                        0,
+                        0,
+                        started,
+                    )
+                    .await;
                     continue;
                 }
             }
@@ -84,20 +104,49 @@ pub async fn run(query_name: Option<&str>, force: bool) -> Result<RunReport> {
         let session = sessions
             .get(&database_config.name)
             .expect("session was just initialized");
-        if let Err(error) = execute_query_pages(
+        let result = execute_query_pages(
             query,
             session,
             state_store.as_ref(),
             &mut state,
             &mut report,
         )
-        .await
-        {
-            tracing::error!(query = %query.name, error = %error, "query run failed");
-            report.failures.push(RunFailure {
-                query: query.name.clone(),
-                error: format!("{error:#}"),
-            });
+        .await;
+        let rows = report.rows_read - initial_rows;
+        let pages = report.pages_read - initial_pages;
+        let batches = report.batches_sent - initial_batches;
+        match result {
+            Ok(()) => {
+                record_query_outcome(
+                    config.monitoring.as_ref(),
+                    query,
+                    true,
+                    "",
+                    rows,
+                    pages,
+                    batches,
+                    started,
+                )
+                .await;
+            }
+            Err(error) => {
+                tracing::error!(query = %query.name, error = %error, "query run failed");
+                report.failures.push(RunFailure {
+                    query: query.name.clone(),
+                    error: format!("{error:#}"),
+                });
+                record_query_outcome(
+                    config.monitoring.as_ref(),
+                    query,
+                    false,
+                    &format!("{error:#}"),
+                    rows,
+                    pages,
+                    batches,
+                    started,
+                )
+                .await;
+            }
         }
     }
 
@@ -108,6 +157,42 @@ pub async fn run(query_name: Option<&str>, force: bool) -> Result<RunReport> {
         "run completed"
     );
     Ok(report)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn record_query_outcome(
+    monitoring_config: Option<&config::monitor_config::MonitoringConfig>,
+    query: &QueryConfig,
+    success: bool,
+    error: &str,
+    rows: usize,
+    pages: usize,
+    batches: usize,
+    started: Instant,
+) {
+    let duration = started.elapsed();
+    if success {
+        monitoring::query_succeeded(&query.name, rows, pages, batches, duration);
+    } else {
+        monitoring::query_failed(&query.name, error, rows, pages, batches, duration);
+    }
+    let event = NotificationEvent {
+        success,
+        query: query.name.clone(),
+        rows_read: rows,
+        pages_read: pages,
+        batches_sent: batches,
+        duration_ms: duration.as_millis().min(u64::MAX as u128) as u64,
+        error: (!success).then(|| error.to_string()),
+        occurred_at: Utc::now(),
+    };
+    if let Err(notification_error) = monitoring::notify(monitoring_config, &event).await {
+        tracing::warn!(
+            query = %query.name,
+            error = %notification_error,
+            "notification delivery failed"
+        );
+    }
 }
 
 async fn execute_query_pages(
@@ -159,6 +244,7 @@ async fn execute_query_pages(
         query_rows += delivery.rows_read;
         query_batches += delivery.batches_sent;
         report.rows_read += delivery.rows_read;
+        report.pages_read += 1;
         report.batches_sent += delivery.batches_sent;
 
         if let Some(store) = state_store {

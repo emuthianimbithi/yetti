@@ -4,13 +4,16 @@ use crate::config;
 use crate::config::execution_config::SchedulerConfig;
 use crate::config::query_config::QueryConfig;
 use crate::config::schedule_config::normalized_cron;
+use crate::monitoring::{self, NotificationEvent};
 use anyhow::{Context, Result, bail};
+use chrono::Utc;
+use std::collections::HashSet;
 use std::fs::{OpenOptions, read_to_string, remove_file};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 use tokio_cron_scheduler::{Job, JobScheduler};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,8 +41,9 @@ pub fn status(pid_file: &str) -> Result<String> {
     if process_is_running(pid) {
         Ok(format!("Yetii daemon is running with pid {pid}"))
     } else {
+        let _ = remove_file(pid_file);
         Ok(format!(
-            "Yetii daemon is not running; stale pid file contains pid {pid}"
+            "Yetii daemon is not running; removed stale pid file for pid {pid}"
         ))
     }
 }
@@ -54,15 +58,16 @@ pub fn stop(pid_file: &str) -> Result<String> {
     }
 
     stop_process(pid)?;
-    let _ = remove_file(pid_file);
     Ok(format!("Stop signal sent to Yetii daemon pid {pid}"))
 }
 
 async fn run_foreground(pid_file: &str) -> Result<String> {
     ensure_no_running_pid(pid_file)?;
     write_pid_file(pid_file, std::process::id())?;
+    let _pid_guard = PidFileGuard::new(pid_file);
 
     let config = config::get_config()?.clone();
+    let monitoring_server = monitoring::start(config.monitoring.as_ref()).await?;
     let runtime = scheduler_runtime_config(config.execution.scheduler.as_ref())?;
     let scheduled_queries = scheduled_queries(&config.queries)?;
     if scheduled_queries.is_empty() {
@@ -73,22 +78,35 @@ async fn run_foreground(pid_file: &str) -> Result<String> {
         .await
         .context("failed to create scheduler")?;
     let semaphore = Arc::new(Semaphore::new(runtime.max_concurrent_jobs));
+    let running_queries = Arc::new(Mutex::new(HashSet::<String>::new()));
 
     for scheduled_query in scheduled_queries {
         let query_name = scheduled_query.name.clone();
         let cron = scheduled_query.cron.clone();
         let semaphore = semaphore.clone();
+        let running_queries = running_queries.clone();
         let timeout_minutes = runtime.job_timeout_minutes;
         scheduler
             .add(Job::new_async(cron.clone(), move |_uuid, _lock| {
                 let query_name = query_name.clone();
                 let semaphore = semaphore.clone();
+                let running_queries = running_queries.clone();
                 Box::pin(async move {
+                    {
+                        let mut running = running_queries.lock().await;
+                        if !running.insert(query_name.clone()) {
+                            monitoring::record_overlap_skip(&query_name);
+                            tracing::warn!(query = %query_name, "overlapping scheduled execution skipped");
+                            return;
+                        }
+                    }
                     let Ok(_permit) = semaphore.acquire_owned().await else {
+                        running_queries.lock().await.remove(&query_name);
                         tracing::error!(query = %query_name, "scheduler concurrency limiter was closed");
                         return;
                     };
-                    run_scheduled_query(query_name, timeout_minutes).await;
+                    run_scheduled_query(query_name.clone(), timeout_minutes).await;
+                    running_queries.lock().await.remove(&query_name);
                 })
             })?)
             .await
@@ -110,17 +128,23 @@ async fn run_foreground(pid_file: &str) -> Result<String> {
         max_concurrent_jobs = runtime.max_concurrent_jobs,
         "Yetii daemon started"
     );
+    monitoring::set_ready(true);
 
-    tokio::signal::ctrl_c()
-        .await
-        .context("failed to listen for Ctrl-C")?;
+    shutdown_signal().await?;
     tracing::info!("shutdown signal received");
+    monitoring::set_shutting_down();
     let mut scheduler = scheduler;
     scheduler
         .shutdown()
         .await
         .context("failed to shut down scheduler")?;
-    remove_pid_file_if_current(pid_file);
+    let _all_permits = semaphore
+        .acquire_many(runtime.max_concurrent_jobs as u32)
+        .await
+        .context("scheduler concurrency limiter closed during shutdown")?;
+    if let Some(server) = monitoring_server {
+        server.shutdown().await;
+    }
     Ok("Yetii daemon stopped".to_string())
 }
 
@@ -137,6 +161,9 @@ async fn run_scheduled_query(query_name: String, timeout_minutes: Option<u32>) {
         {
             Ok(result) => result,
             Err(_) => {
+                let error = "scheduled query timed out";
+                monitoring::query_failed(&query_name, error, 0, 0, 0, started.elapsed());
+                notify_scheduled_failure(&query_name, error, started.elapsed()).await;
                 tracing::error!(
                     query = %query_name,
                     timeout_minutes,
@@ -165,12 +192,42 @@ async fn run_scheduled_query(query_name: String, timeout_minutes: Option<u32>) {
             duration_ms = started.elapsed().as_millis(),
             "scheduled query completed with failures"
         ),
-        Err(error) => tracing::error!(
+        Err(error) => {
+            monitoring::query_failed(&query_name, &error.to_string(), 0, 0, 0, started.elapsed());
+            notify_scheduled_failure(&query_name, &error.to_string(), started.elapsed()).await;
+            tracing::error!(
+                query = %query_name,
+                error = %error,
+                duration_ms = started.elapsed().as_millis(),
+                "scheduled query failed"
+            );
+        }
+    }
+}
+
+async fn notify_scheduled_failure(query_name: &str, error: &str, duration: std::time::Duration) {
+    let monitoring_config = {
+        let Ok(config) = config::get_config() else {
+            return;
+        };
+        config.monitoring.clone()
+    };
+    let event = NotificationEvent {
+        success: false,
+        query: query_name.to_string(),
+        rows_read: 0,
+        pages_read: 0,
+        batches_sent: 0,
+        duration_ms: duration.as_millis().min(u64::MAX as u128) as u64,
+        error: Some(error.to_string()),
+        occurred_at: Utc::now(),
+    };
+    if let Err(notification_error) = monitoring::notify(monitoring_config.as_ref(), &event).await {
+        tracing::warn!(
             query = %query_name,
-            error = %error,
-            duration_ms = started.elapsed().as_millis(),
-            "scheduled query failed"
-        ),
+            error = %notification_error,
+            "scheduled failure notification failed"
+        );
     }
 }
 
@@ -255,6 +312,7 @@ fn start_detached(yetii: &Yetii, pid_file: &str, log_file: &str) -> Result<Strin
 
 fn ensure_no_running_pid(pid_file: &str) -> Result<()> {
     match read_pid(pid_file) {
+        Ok(pid) if pid == std::process::id() => Ok(()),
         Ok(pid) if process_is_running(pid) => {
             bail!("Yetii daemon already appears to be running with pid {pid}")
         }
@@ -263,6 +321,46 @@ fn ensure_no_running_pid(pid_file: &str) -> Result<()> {
             Ok(())
         }
         Err(_) => Ok(()),
+    }
+}
+
+struct PidFileGuard {
+    path: String,
+}
+
+impl PidFileGuard {
+    fn new(path: &str) -> Self {
+        Self {
+            path: path.to_string(),
+        }
+    }
+}
+
+impl Drop for PidFileGuard {
+    fn drop(&mut self) {
+        remove_pid_file_if_current(&self.path);
+    }
+}
+
+async fn shutdown_signal() -> Result<()> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .context("failed to listen for SIGTERM")?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                result.context("failed to listen for Ctrl-C")?;
+            }
+            _ = terminate.recv() => {}
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c()
+            .await
+            .context("failed to listen for Ctrl-C")
     }
 }
 

@@ -7,6 +7,7 @@ mod commands;
 mod config;
 mod database;
 mod http;
+mod monitoring;
 mod state;
 mod transform;
 
