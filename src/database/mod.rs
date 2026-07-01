@@ -16,6 +16,7 @@ use odbc_api::{
 use once_cell::sync::OnceCell;
 use serde_json::{Map, Number, Value};
 use std::collections::{HashMap, HashSet};
+use tokio::sync::{mpsc, oneshot};
 
 static ODBC_ENV: OnceCell<Environment> = OnceCell::new();
 
@@ -23,15 +24,18 @@ pub type QueryParameters = HashMap<String, QueryParameter>;
 
 #[derive(Debug, Clone)]
 pub struct QueryRequest {
-    pub name: String,
     pub sql: String,
     pub parameters: Option<QueryParameters>,
 }
 
-#[derive(Debug)]
-pub struct QueryOutcome {
-    pub name: String,
-    pub rows: Result<Vec<Map<String, Value>>, DbError>,
+struct SessionCommand {
+    query: QueryRequest,
+    response: oneshot::Sender<Result<Vec<Map<String, Value>>, DbError>>,
+}
+
+pub struct QuerySession {
+    sender: mpsc::UnboundedSender<SessionCommand>,
+    _worker: tokio::task::JoinHandle<()>,
 }
 
 pub fn env() -> Result<&'static Environment, DbError> {
@@ -41,44 +45,62 @@ pub fn env() -> Result<&'static Environment, DbError> {
     })
 }
 
-pub async fn run_queries(
-    db: &DatabaseConfig,
-    queries: Vec<QueryRequest>,
-) -> Result<Vec<QueryOutcome>, DbError> {
+pub async fn open_session(db: &DatabaseConfig) -> Result<QuerySession, DbError> {
     let db = db.clone();
+    let (sender, mut receiver) = mpsc::unbounded_channel::<SessionCommand>();
+    let (ready_sender, ready_receiver) = oneshot::channel();
+    let worker = tokio::task::spawn_blocking(move || {
+        let connection_string = build_connection_string(&db);
+        tracing::debug!(
+            database = %db.name,
+            connection = %redacted_connection_description(&db),
+            "opening ODBC connection"
+        );
+        let connection = match env().and_then(|environment| {
+            environment
+                .connect_with_connection_string(&connection_string, ConnectionOptions::default())
+                .map_err(DbError::Connect)
+        }) {
+            Ok(connection) => connection,
+            Err(error) => {
+                let _ = ready_sender.send(Err(error));
+                return;
+            }
+        };
+        if ready_sender.send(Ok(())).is_err() {
+            return;
+        }
 
-    tokio::task::spawn_blocking(move || run_queries_blocking(&db, queries)).await?
-}
-
-fn run_queries_blocking(
-    db: &DatabaseConfig,
-    queries: Vec<QueryRequest>,
-) -> Result<Vec<QueryOutcome>, DbError> {
-    let connection_string = build_connection_string(db);
-    tracing::debug!(
-        database = %db.name,
-        connection = %redacted_connection_description(db),
-        "opening ODBC connection"
-    );
-
-    let environment = env()?;
-    let connection = environment
-        .connect_with_connection_string(&connection_string, ConnectionOptions::default())
-        .map_err(DbError::Connect)?;
-
-    Ok(queries
-        .into_iter()
-        .map(|query| {
-            let name = query.name;
+        while let Some(command) = receiver.blocking_recv() {
             let rows = run_query_on_connection(
                 &connection,
-                &query.sql,
-                query.parameters.as_ref(),
+                &command.query.sql,
+                command.query.parameters.as_ref(),
                 db.pool.timeout_seconds.map(|timeout| timeout as usize),
             );
-            QueryOutcome { name, rows }
-        })
-        .collect())
+            let _ = command.response.send(rows);
+        }
+    });
+
+    ready_receiver
+        .await
+        .map_err(|_| DbError::Worker("connection worker exited during startup".to_string()))??;
+    Ok(QuerySession {
+        sender,
+        _worker: worker,
+    })
+}
+
+impl QuerySession {
+    pub async fn run(&self, query: QueryRequest) -> Result<Vec<Map<String, Value>>, DbError> {
+        let (response, receiver) = oneshot::channel();
+        self.sender
+            .send(SessionCommand { query, response })
+            .map_err(|_| DbError::Worker("query worker is no longer running".to_string()))?;
+        receiver
+            .await
+            .map_err(|_| DbError::Worker("query worker exited before responding".to_string()))?
+    }
 }
 
 fn run_query_on_connection(

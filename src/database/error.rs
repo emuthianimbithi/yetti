@@ -12,4 +12,6 @@ pub enum DbError {
     Parameter(String),
     #[error("ODBC worker task failed: {0}")]
     Join(#[from] tokio::task::JoinError),
+    #[error("ODBC worker stopped unexpectedly: {0}")]
+    Worker(String),
 }

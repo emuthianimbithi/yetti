@@ -2,16 +2,20 @@ use crate::config;
 use crate::config::query_config::QueryConfig;
 use crate::database::{self, QueryRequest};
 use crate::http::HttpSender;
-use crate::state::{self, QueryRunState, StateStore, YetiiState};
+use crate::state::{self, StateStore, WatermarkUpdate, YetiiState};
 use crate::transform;
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt;
 
-type QueryGroups = BTreeMap<String, Vec<QueryRequest>>;
-type QueryRunStates = HashMap<String, QueryRunState>;
+struct DeliveryOutcome {
+    rows_read: usize,
+    batches_sent: usize,
+    watermark: Option<WatermarkUpdate>,
+}
 
 #[derive(Debug, Default)]
 pub struct RunReport {
@@ -58,57 +62,42 @@ pub async fn run(query_name: Option<&str>, force: bool) -> Result<RunReport> {
         None => None,
     };
     let mut report = RunReport::default();
-    let query_lookup = selected_queries
-        .iter()
-        .map(|query| (query.name.clone(), *query))
-        .collect::<HashMap<_, _>>();
-    let (groups, state_runs) =
-        group_queries_by_database(&config.databases, &selected_queries, state.as_ref())?;
+    let mut sessions = HashMap::new();
 
-    for (database_name, db_requests) in groups {
-        let database_config = config
-            .databases
-            .get(&database_name)
-            .expect("query grouping only uses known databases");
-        let db_outcomes = database::run_queries(database_config, db_requests)
-            .await
-            .with_context(|| format!("database query execution failed for '{database_name}'"))?;
-
-        for outcome in db_outcomes {
-            let query = query_lookup
-                .get(&outcome.name)
-                .expect("database outcome should match selected query");
-
-            match outcome.rows {
-                Ok(rows) => match deliver_query_rows(query, rows).await {
-                    Ok((rows_read, batches_sent)) => {
-                        report.rows_read += rows_read;
-                        report.batches_sent += batches_sent;
-                        record_successful_query_state(
-                            &state_store,
-                            state.as_mut(),
-                            &state_runs,
-                            &query.name,
-                            rows_read,
-                            batches_sent,
-                        )?;
-                    }
-                    Err(error) => {
-                        tracing::error!(query = %query.name, error = %error, "query delivery failed");
-                        report.failures.push(RunFailure {
-                            query: query.name.clone(),
-                            error: format!("{error:#}"),
-                        });
-                    }
-                },
+    for query in selected_queries {
+        let database_config = resolve_database(&config.databases, query)?;
+        if !sessions.contains_key(&database_config.name) {
+            match database::open_session(database_config).await {
+                Ok(session) => {
+                    sessions.insert(database_config.name.clone(), session);
+                }
                 Err(error) => {
-                    tracing::error!(query = %query.name, error = %error, "query run failed");
                     report.failures.push(RunFailure {
                         query: query.name.clone(),
-                        error: format!("{error:#}"),
+                        error: format!("database connection failed: {error}"),
                     });
+                    continue;
                 }
             }
+        }
+
+        let session = sessions
+            .get(&database_config.name)
+            .expect("session was just initialized");
+        if let Err(error) = execute_query_pages(
+            query,
+            session,
+            state_store.as_ref(),
+            &mut state,
+            &mut report,
+        )
+        .await
+        {
+            tracing::error!(query = %query.name, error = %error, "query run failed");
+            report.failures.push(RunFailure {
+                query: query.name.clone(),
+                error: format!("{error:#}"),
+            });
         }
     }
 
@@ -121,95 +110,155 @@ pub async fn run(query_name: Option<&str>, force: bool) -> Result<RunReport> {
     Ok(report)
 }
 
-fn group_queries_by_database(
-    databases: &config::database::DatabaseConfigs,
-    queries: &[&QueryConfig],
-    state: Option<&YetiiState>,
-) -> Result<(QueryGroups, QueryRunStates)> {
-    let mut groups = BTreeMap::new();
-    let mut state_runs = HashMap::new();
+async fn execute_query_pages(
+    query: &QueryConfig,
+    session: &database::QuerySession,
+    state_store: Option<&StateStore>,
+    state: &mut Option<YetiiState>,
+    report: &mut RunReport,
+) -> Result<()> {
+    let started_at = Utc::now();
+    let page_size = query
+        .watermark
+        .as_ref()
+        .and_then(|watermark| watermark.page_size);
+    let mut page = 0usize;
+    let mut query_rows = 0usize;
+    let mut query_batches = 0usize;
 
-    for query in queries {
-        let database = databases
-            .resolve_for_query(query.database.as_deref())
-            .ok_or_else(|| {
-                if databases.len() > 1 && query.database.is_none() {
-                    anyhow!(
-                        "query '{}' must set database when multiple databases are configured",
-                        query.name
-                    )
-                } else {
-                    anyhow!(
-                        "query '{}' references unknown database '{}'",
-                        query.name,
-                        query.database.as_deref().unwrap_or("<missing>")
-                    )
-                }
-            })?;
-        let mut parameters = query.query.parameters.clone();
-        let state_parameters = match state {
-            Some(state) => state::resolve_query_parameters(query, &mut parameters, state)
-                .with_context(|| {
-                    format!("failed to resolve state parameters for '{}'", query.name)
-                })?,
-            None => Vec::new(),
-        };
-
-        groups
-            .entry(database.name.clone())
-            .or_insert_with(Vec::new)
-            .push(QueryRequest {
-                name: query.name.clone(),
+    loop {
+        page += 1;
+        let parameters = resolve_parameters(query, state.as_ref())?;
+        let current_watermark = parameters
+            .as_ref()
+            .map(|parameters| state::current_watermark(query, parameters))
+            .transpose()?
+            .flatten();
+        let rows = session
+            .run(QueryRequest {
                 sql: query.query.sql.clone(),
                 parameters,
-            });
-        state_runs.insert(
-            query.name.clone(),
-            QueryRunState {
-                started_at: Utc::now(),
-                state_parameters,
-            },
-        );
+            })
+            .await
+            .with_context(|| format!("database query '{}' failed on page {page}", query.name))?;
+
+        if let Some(page_size) = page_size
+            && rows.len() > page_size
+        {
+            bail!(
+                "query '{}' returned {} rows, exceeding watermark.page_size={page_size}; make the SQL limit match page_size",
+                query.name,
+                rows.len()
+            );
+        }
+        if page > 1 && rows.is_empty() {
+            break;
+        }
+
+        let delivery = deliver_query_rows(query, rows, current_watermark.as_ref()).await?;
+        query_rows += delivery.rows_read;
+        query_batches += delivery.batches_sent;
+        report.rows_read += delivery.rows_read;
+        report.batches_sent += delivery.batches_sent;
+
+        if let Some(store) = state_store {
+            *state = Some(
+                store
+                    .record_success(
+                        &query.name,
+                        started_at,
+                        query_rows,
+                        query_batches,
+                        delivery.watermark.clone(),
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("failed to save state file '{}'", store.path().display())
+                    })?,
+            );
+        }
+
+        let Some(page_size) = page_size else {
+            break;
+        };
+        if delivery.rows_read < page_size {
+            break;
+        }
+        if delivery.watermark.is_none() {
+            bail!(
+                "query '{}' returned a full page without an advancing watermark",
+                query.name
+            );
+        }
+        tracing::debug!(query = %query.name, page, "continuing paginated query");
     }
 
-    Ok((groups, state_runs))
+    Ok(())
 }
 
-fn record_successful_query_state(
-    state_store: &Option<StateStore>,
-    state: Option<&mut YetiiState>,
-    state_runs: &QueryRunStates,
-    query_name: &str,
-    rows_read: usize,
-    batches_sent: usize,
-) -> Result<()> {
-    let (Some(store), Some(state), Some(run_state)) =
-        (state_store.as_ref(), state, state_runs.get(query_name))
-    else {
-        return Ok(());
-    };
+fn resolve_database<'a>(
+    databases: &'a config::database::DatabaseConfigs,
+    query: &QueryConfig,
+) -> Result<&'a config::database::DatabaseConfig> {
+    databases
+        .resolve_for_query(query.database.as_deref())
+        .ok_or_else(|| {
+            if databases.len() > 1 && query.database.is_none() {
+                anyhow!(
+                    "query '{}' must set database when multiple databases are configured",
+                    query.name
+                )
+            } else {
+                anyhow!(
+                    "query '{}' references unknown database '{}'",
+                    query.name,
+                    query.database.as_deref().unwrap_or("<missing>")
+                )
+            }
+        })
+}
 
-    state.record_success(
-        query_name,
-        run_state.started_at,
-        Utc::now(),
-        rows_read,
-        batches_sent,
-        &run_state.state_parameters,
-    );
-    store
-        .save(state)
-        .with_context(|| format!("failed to save state file '{}'", store.path().display()))?;
-    tracing::debug!(query = %query_name, path = %store.path().display(), "saved query state");
-    Ok(())
+fn resolve_parameters(
+    query: &QueryConfig,
+    state: Option<&YetiiState>,
+) -> Result<Option<database::QueryParameters>> {
+    let mut parameters = query.query.parameters.clone();
+    if state.is_none()
+        && parameters.as_ref().is_some_and(|parameters| {
+            parameters
+                .values()
+                .any(crate::config::watermark_config::is_state_parameter)
+        })
+    {
+        bail!(
+            "query '{}' uses a state_file parameter but state management is not enabled",
+            query.name
+        );
+    }
+    if let Some(state) = state {
+        state::resolve_query_parameters(query, &mut parameters, state)
+            .with_context(|| format!("failed to resolve state parameters for '{}'", query.name))?;
+    }
+    Ok(parameters)
 }
 
 async fn deliver_query_rows(
     query: &QueryConfig,
     rows: Vec<serde_json::Map<String, serde_json::Value>>,
-) -> Result<(usize, usize)> {
+    current_watermark: Option<&WatermarkUpdate>,
+) -> Result<DeliveryOutcome> {
     tracing::info!(query = %query.name, "delivering query rows");
     let rows_read = rows.len();
+    let watermark = state::extract_watermark(query, &rows)
+        .with_context(|| format!("watermark extraction for query '{}' failed", query.name))?;
+    if let (Some(next), Some(current)) = (&watermark, current_watermark)
+        && state::compare_watermarks(next, current)? != Ordering::Greater
+    {
+        bail!(
+            "query '{}' did not advance its watermark; verify the WHERE clause and cursor ordering",
+            query.name
+        );
+    }
     let rows = transform::apply(rows, &query.transform)
         .with_context(|| format!("transform for query '{}' failed", query.name))?;
     let rows = rows.into_iter().map(Value::Object).collect::<Vec<_>>();
@@ -246,7 +295,11 @@ async fn deliver_query_rows(
         batches_sent,
         "query completed"
     );
-    Ok((rows_read, batches_sent))
+    Ok(DeliveryOutcome {
+        rows_read,
+        batches_sent,
+        watermark,
+    })
 }
 
 fn select_queries<'a>(
@@ -292,6 +345,7 @@ mod tests {
                 parameters: None,
                 validation: None,
             },
+            watermark: None,
             transform: TransformConfig::default(),
             endpoint: EndpointConfig {
                 url: "https://example.test".to_string(),
@@ -333,12 +387,14 @@ mod tests {
         let mut billing_query = query("invoices", true);
         billing_query.database = Some("billing".to_string());
 
-        let (groups, _) =
-            group_queries_by_database(&databases, &[&erp_query, &billing_query], None).unwrap();
-
-        assert_eq!(2, groups.len());
-        assert_eq!("customers", groups["erp"][0].name);
-        assert_eq!("invoices", groups["billing"][0].name);
+        assert_eq!(
+            "erp",
+            resolve_database(&databases, &erp_query).unwrap().name
+        );
+        assert_eq!(
+            "billing",
+            resolve_database(&databases, &billing_query).unwrap().name
+        );
     }
 
     #[test]
@@ -346,9 +402,7 @@ mod tests {
         let databases = DatabaseConfigs::from(database("main"));
         let query = query("sync", true);
 
-        let (groups, _) = group_queries_by_database(&databases, &[&query], None).unwrap();
-
-        assert_eq!("sync", groups["main"][0].name);
+        assert_eq!("main", resolve_database(&databases, &query).unwrap().name);
     }
 
     #[test]
@@ -356,12 +410,11 @@ mod tests {
         let databases = DatabaseConfigs::from(vec![database("erp"), database("billing")]);
         let query = query("sync", true);
 
-        assert!(group_queries_by_database(&databases, &[&query], None).is_err());
+        assert!(resolve_database(&databases, &query).is_err());
     }
 
     #[test]
     fn group_queries_resolves_state_parameters_before_database_execution() {
-        let databases = DatabaseConfigs::from(database("main"));
         let mut query = query("orders_sync", true);
         let mut parameters = HashMap::new();
         parameters.insert(
@@ -386,21 +439,11 @@ mod tests {
                 "2026-07-01T10:00:00Z".to_string(),
             );
 
-        let (groups, state_runs) =
-            group_queries_by_database(&databases, &[&query], Some(&state)).unwrap();
-        let parameter = groups["main"][0]
-            .parameters
-            .as_ref()
-            .unwrap()
-            .get("last_run_time")
-            .unwrap();
+        let parameters = resolve_parameters(&query, Some(&state)).unwrap();
+        let parameter = parameters.as_ref().unwrap().get("last_run_time").unwrap();
 
         assert_eq!(Some("2026-07-01T10:00:00Z"), parameter.default.as_deref());
         assert_eq!(None, parameter.source.as_deref());
-        assert_eq!(
-            "last_run_time",
-            state_runs["orders_sync"].state_parameters[0].watermark_name
-        );
     }
 
     fn database(name: &str) -> DatabaseConfig {

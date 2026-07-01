@@ -14,6 +14,7 @@ pub(crate) mod security_settings;
 pub(crate) mod sql_query;
 pub(crate) mod transform_config;
 mod utils;
+pub(crate) mod watermark_config;
 pub(crate) mod yetii;
 
 use once_cell::sync::OnceCell;
@@ -248,6 +249,21 @@ queries: []
         ));
     }
 
+    #[test]
+    fn max_watermark_requires_enabled_state_management() {
+        let config: yetii::YetiiConfig =
+            serde_yaml::from_str(&watermark_query_yaml(false)).unwrap();
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue { field, .. })
+                if field == "query 'sync'.watermark"
+        ));
+
+        let config: yetii::YetiiConfig = serde_yaml::from_str(&watermark_query_yaml(true)).unwrap();
+        config.validate().unwrap();
+    }
+
     fn multi_database_query_yaml(database: Option<&str>) -> String {
         let database_line = database
             .map(|name| format!("    database: {name}\n"))
@@ -281,6 +297,46 @@ queries:
     endpoint:
       url: http://127.0.0.1/sync
       method: POST
+"#
+        )
+    }
+
+    fn watermark_query_yaml(state_enabled: bool) -> String {
+        format!(
+            r#"
+version: "1.0.0"
+databases:
+  name: main
+  type: postgres
+  host: localhost
+  port: 5432
+  database: postgres
+  auth:
+    username: null
+    password: null
+queries:
+  - name: sync
+    description: sync
+    enabled: true
+    query:
+      sql: SELECT id FROM orders WHERE id > $last_id
+      parameters:
+        last_id:
+          type: bigint
+          default: "0"
+          source: state_file
+    watermark:
+      strategy: max
+      column: id
+      parameter: last_id
+    endpoint:
+      url: http://127.0.0.1/sync
+      method: POST
+execution:
+  state_management:
+    enabled: {state_enabled}
+    state_file: ./state/yetii_state.json
+    backup_states: 2
 "#
         )
     }

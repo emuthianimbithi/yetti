@@ -42,6 +42,22 @@ impl YetiiConfig {
         // Validate all queries
         for query in &self.queries {
             query.validate()?;
+            if query
+                .watermark
+                .as_ref()
+                .is_some_and(|watermark| watermark.is_incremental())
+                && !self
+                    .execution
+                    .state_management
+                    .as_ref()
+                    .is_some_and(|state| state.enabled)
+            {
+                return Err(ConfigError::InvalidValue {
+                    field: format!("query '{}'.watermark", query.name),
+                    value: "incremental watermarks require execution.state_management.enabled=true"
+                        .to_string(),
+                });
+            }
             match self.databases.resolve_for_query(query.database.as_deref()) {
                 Some(_) => {}
                 None if self.databases.len() > 1 && query.database.is_none() => {

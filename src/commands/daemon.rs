@@ -440,6 +440,7 @@ mod tests {
                 parameters: None,
                 validation: None,
             },
+            watermark: None,
             transform: TransformConfig::default(),
             endpoint: EndpointConfig {
                 url: "http://127.0.0.1/sync".to_string(),

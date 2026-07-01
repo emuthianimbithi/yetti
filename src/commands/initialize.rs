@@ -14,6 +14,7 @@ use crate::config::schedule_config::ScheduleConfig;
 use crate::config::security_settings::SecuritySettings;
 use crate::config::sql_query::{QueryParameter, QueryValidation, SqlQuery};
 use crate::config::transform_config::{DataConversion, DataFilter, TransformConfig};
+use crate::config::watermark_config::{WatermarkConfig, WatermarkStrategy};
 use crate::config::yetii::YetiiConfig;
 /// The creation of this file was inspired by the `cargo init` command.
 use std::collections::HashMap;
@@ -97,6 +98,14 @@ fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error
             source: Some("state_file".to_string()),
         },
     );
+    query_parameters.insert(
+        "last_customer_id".to_string(),
+        QueryParameter {
+            param_type: "bigint".to_string(),
+            default: Some("0".to_string()),
+            source: Some("state_file".to_string()),
+        },
+    );
 
     let mut field_mappings = HashMap::new();
     field_mappings.insert("id".to_string(), "customer_id".to_string());
@@ -177,7 +186,7 @@ fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error
                     enabled: true,
                 }),
                 query: SqlQuery {
-                    sql: "SELECT \n  customer_id,\n  customer_name,\n  email,\n  created_at\nFROM customers \nWHERE updated_at > $last_run_time\nORDER BY updated_at".to_string(),
+                    sql: "SELECT \n  customer_id,\n  customer_name,\n  email,\n  created_at,\n  updated_at\nFROM customers \nWHERE updated_at > $last_run_time\n   OR (updated_at = $last_run_time AND customer_id > $last_customer_id)\nORDER BY updated_at, customer_id\nLIMIT 1000".to_string(),
                     parameters: Some(query_parameters),
                     validation: Some(QueryValidation {
                         strict_mapping: Some(true),
@@ -185,6 +194,17 @@ fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error
                         validate_filter_fields: Some(true),
                     }),
                 },
+                watermark: Some(WatermarkConfig {
+                    strategy: WatermarkStrategy::MaxTuple,
+                    column: None,
+                    parameter: None,
+                    columns: Some(vec!["updated_at".to_string(), "customer_id".to_string()]),
+                    parameters: Some(vec![
+                        "last_run_time".to_string(),
+                        "last_customer_id".to_string(),
+                    ]),
+                    page_size: Some(1000),
+                }),
                 transform: TransformConfig {
                     enabled: true,
                     mappings: Some(field_mappings),
@@ -280,7 +300,7 @@ fn generate_commented_yaml(config: &YetiiConfig) -> Result<String, Box<dyn Error
 #
 # Database Configuration:
 # - Supports PostgreSQL, MySQL, MSSQL, Oracle, and ODBC connections
-# - Use environment variables for sensitive data like passwords (${{VAR_NAME}})
+# - Use environment variables for sensitive data like passwords (for example, $VAR_NAME)
 # - Connection pooling helps manage database resources efficiently
 #
 # Query Configuration:
@@ -302,7 +322,7 @@ fn generate_commented_yaml(config: &YetiiConfig) -> Result<String, Box<dyn Error
 # - retry: Attempt to retry the operation
 #
 # Environment Variables:
-# - Use ${{VARIABLE_NAME}} syntax for environment variable substitution
+# - Use a braced environment-variable reference in configuration values
 # - Recommended for passwords, API keys, and environment-specific values
 #
 # For more information, visit: https://docs.yetii.io

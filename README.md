@@ -285,15 +285,22 @@ The older single-object `databases:` shape is still accepted for one-database co
 
 ### Incremental state
 
-When `execution.state_management.enabled` is true, Yetii reads and writes a JSON state file. A query parameter with `source: state_file` is resolved from that query's saved watermark; if no saved value exists, Yetii uses the parameter `default`.
+Incremental synchronization has two separate responsibilities:
+
+1. The query author writes the incremental SQL condition.
+2. Yetii supplies the saved parameter value and records the next successful watermark.
+
+Yetii does not automatically add a `WHERE` clause, `LIMIT`, or database-specific pagination to SQL. The field used as a cursor must be chosen explicitly because schemas and change-tracking mechanisms differ between databases.
+
+When `execution.state_management.enabled` is true, Yetii reads and writes a JSON state file. A parameter with `source: state_file` is resolved from that query's saved value. If no saved value exists, Yetii uses the parameter's `default`.
 
 ```yaml
 query:
   sql: |
-    SELECT *
+    SELECT id, status, updated_at
     FROM orders
     WHERE updated_at > $last_run_time
-    ORDER BY updated_at
+    ORDER BY updated_at, id
   parameters:
     last_run_time:
       type: timestamp
@@ -301,7 +308,66 @@ query:
       default: "1970-01-01T00:00:00Z"
 ```
 
-State is advanced only after the query rows are transformed and all HTTP batches are delivered successfully. Before each write, Yetii rotates backups such as `yetii_state.json.1`, up to `backup_states`.
+The parameter placeholder syntax is normalized by Yetii and the value is bound through ODBC. Never interpolate the saved value into SQL manually.
+
+#### Choosing a cursor
+
+Use a field whose value advances whenever a row must be synchronized:
+
+- `updated_at` for inserts and updates, when the application maintains it reliably
+- an increasing `id` for insert-only tables
+- a database sequence, SQL Server `rowversion`, or another database change number
+- CDC/change-tracking data for sources that expose it
+
+`created_at` is not sufficient when existing rows can be updated. A cursor also cannot detect rows inserted later with an older cursor value.
+
+The cursor column must be indexed for incremental queries over large tables. It must also be returned by the query so Yetii can calculate the maximum delivered value.
+
+#### Production-safe watermark contract
+
+Declare the result column and the bound state parameter explicitly:
+
+```yaml
+watermark:
+  strategy: max
+  column: updated_at
+  parameter: last_run_time
+```
+
+Yetii then:
+
+- calculate the maximum non-null `updated_at` returned by the query
+- save that value only after transformation and every HTTP batch succeeds
+- leave the watermark unchanged when delivery fails
+- leave the watermark unchanged when the query returns no rows
+- fail the run if the declared watermark column is missing or null
+
+This avoids advancing the checkpoint to the wall-clock completion time, which could skip rows committed while a query is running. Numeric (`integer`, `bigint`, `float`, `double`, `decimal`, and `numeric`) and temporal (`date`, `time`, `timestamp`, and `datetime`) cursor parameters are supported.
+
+Tables without a reliable cursor should use full synchronization. Omit both the `state_file` parameter and `watermark`, or declare the intent explicitly:
+
+```yaml
+watermark:
+  strategy: none
+```
+
+Timestamp cursors can contain duplicate values. Paginated queries should therefore use `strategy: max_tuple` and end with a stable unique field such as `id`:
+
+```yaml
+watermark:
+  strategy: max_tuple
+  columns: [updated_at, id]
+  parameters: [last_updated_at, last_id]
+  page_size: 1000
+```
+
+Tuple cursors may contain two or more components. Yetii compares them lexicographically, checkpoints every component atomically, and repeats the query while it returns exactly `page_size` rows. The SQL must use the same ordering and limit. See [Incremental synchronization](docs/incremental-sync.md) for complete SQL and database-specific examples.
+
+Yetii provides at-least-once delivery. If some HTTP batches succeed and a later batch fails, state is not advanced and the next run can resend earlier rows. Receiving endpoints should therefore support idempotency or upserts.
+
+Before each state write, Yetii rotates backups such as `yetii_state.json.1`, up to `backup_states`. Writes from concurrent jobs in one Yetii process are merged and a stale job cannot move a watermark backwards. Do not run multiple Yetii processes against the same state file.
+
+The state file must be stored on persistent storage when Yetii runs in a container or ephemeral cloud instance.
 
 ---
 
