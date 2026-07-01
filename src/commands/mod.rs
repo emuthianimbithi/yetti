@@ -1,47 +1,70 @@
+mod daemon;
 mod initialize;
 mod odbc;
 mod run;
-use crate::cli::{Commands, Yetii};
-use crate::{config};
-pub fn going_through_commands(yetii: &Yetii){
-// This function processes the commands provided by the user through the Yetii CLI.
-// It matches the command and executes the corresponding functionality.
-// Each command has its own logic and can interact with the Yetii application in different ways.
-    // first init the config file
+mod setup;
 
+use crate::cli::{Commands, DaemonCommand, Yetii};
+use crate::config;
+use anyhow::{Result, bail};
+
+pub async fn going_through_commands(yetii: &Yetii) -> Result<()> {
     match &yetii.commands {
-        Commands::Init{ path} => {
+        Commands::Init { path } => {
             let config_name = std::path::Path::new(&yetii.file)
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("yetii.yaml");
-            match initialize::initialize_yetii_config(config_name, path) {
-                Ok(message) => println!("{}", message),
-                Err(e) => eprintln!("Error initializing Yetii configuration: {}", e),
-            }
+            let message = initialize::initialize_yetii_config(config_name, path)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            println!("{message}");
         }
         Commands::CheckExistingOdbc => {
-            match odbc::check_odbc_drivers(){
-                Ok(output) => println!("ODBC Drivers found:\n{}", output),
-                Err(e) => eprintln!("Error checking ODBC drivers: {}", e),
-            }
+            let output = tokio::task::spawn_blocking(odbc::check_odbc_drivers).await??;
+            println!("ODBC configuration:\n{output}");
         }
-        Commands::Run { query: _query,force: _force }=> {
-            match run::run() {
-                Ok(output) => println!("Run completed successfully:\n{}", output),
-                Err(e) => eprintln!("Error running Yetii: {}", e),
-            }
+        Commands::Setup { dry_run } => {
+            let config = config::get_config()?.clone();
+            let report = setup::run(&config.databases, *dry_run).await?;
+            println!("{report}");
         }
-        Commands::CheckConfig=> {
-            match config::get_config() {
-                Ok(cfg) => {
-                    match config::yetii::YetiiConfig::validate(&cfg) {
-                        Ok(_) => println!("✅ Yetii configuration file is valid."),
-                        Err(e) => eprintln!("❌❌Error validating Yetii configuration file: {}❌❌", e),
-                    }
+        Commands::Run { query, force } => {
+            let report = run::run(query.as_deref(), *force).await?;
+            println!("{report}");
+            if !report.failures.is_empty() {
+                for failure in &report.failures {
+                    tracing::error!(
+                        query = %failure.query,
+                        error = %failure.error,
+                        "query failed"
+                    );
                 }
-                Err(e) => eprintln!("Error accessing configuration: {}", e),
+                bail!("{} query execution(s) failed", report.failures.len());
             }
         }
+        Commands::CheckConfig => {
+            let config = config::get_config()?;
+            config.validate()?;
+            tracing::info!("configuration is valid");
+        }
+        Commands::Daemon { command } => match command {
+            DaemonCommand::Start {
+                detach,
+                pid_file,
+                log_file,
+            } => {
+                let message = daemon::start(yetii, *detach, pid_file, log_file).await?;
+                println!("{message}");
+            }
+            DaemonCommand::Status { pid_file } => {
+                let message = daemon::status(pid_file)?;
+                println!("{message}");
+            }
+            DaemonCommand::Stop { pid_file } => {
+                let message = daemon::stop(pid_file)?;
+                println!("{message}");
+            }
+        },
     }
+    Ok(())
 }

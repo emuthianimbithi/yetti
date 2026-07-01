@@ -1,4 +1,4 @@
-use clap::{Parser,Subcommand};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -12,106 +12,77 @@ pub struct Yetii {
 }
 
 #[derive(Subcommand)]
-/// Yetii CLI commands
-/// This module defines the commands available in the Yetii CLI.
-/// Each command has its own functionality and can be used to interact with the Yetii application.
-/// # Commands:
-///- `init`: Initializes the Yetii application.
-/// - `odbc`: Checks for existing ODBC drivers.
-/// - `run`: Runs the Yetii application with specified queries.
-/// - `check-config`: Validates the Yetii configuration.
-/// # Example usage:
-/// ```
-/// yetii init --path /path/to/config
-/// yetii odbc
-/// yetii run --query my_query --force
-/// yetii check-config
-/// This module provides a structured way to manage Yetii's functionality through the command line.
-/// Each command can be executed with specific options and flags to customize its behavior.
-/// # Returns:
-/// - A success message if the command executes successfully.
-/// - An error message if the command fails or encounters issues.
-pub enum Commands{
-    /// Initialize Yetii
-    /// This command initializes the Yetii application, setting up the necessary configuration files and directories.
-    /// # Example usage:
-    ///```
-    /// yetii init
-    /// ```
-    ///This command is useful for setting up Yetii for the first time or resetting its configuration.
-    ///# Returns:
-    ///- A success message if the initialization is successful.
-    ///- An error message if the initialization fails.
+pub enum Commands {
+    /// Create a starter Yetii configuration.
     Init {
-        /// path to the configuration file
-        /// This option allows you to specify the path where the configuration file will be created.
-        /// # Example usage:
-        /// ```
-        /// yetii init --path /path/to/config
-        /// ```
-        /// This is useful for organizing configurations in a specific directory or for using a custom path.
-        /// # Returns:
-        /// - A success message if the initialization is successful.
-        /// - An error message if the initialization fails.
+        /// Directory where the starter configuration should be written.
         #[clap(short, long, default_value = ".")]
         path: String,
     },
-    /// Check if ODBC drivers are installed
-    /// This command checks for existing ODBC drivers on the system.
-    /// It will return a list of installed ODBC drivers or an error if the check fails.
-    /// # Example usage:
-    /// ```
-    /// yetii odbc
-    /// ```
-    ///This command is useful for ensuring that the necessary ODBC drivers are available before proceeding with database operations.
-    /// # Returns:
-    /// - A list of installed ODBC drivers if the check is successful.
-    ///- An error message if the check fails.
+    /// List registered ODBC drivers.
     #[clap(name = "odbc")]
     CheckExistingOdbc,
-    /// Run Yetii
-    /// This command runs the Yetii application, executing the configured queries and operations.
-    /// # Example usage:
-    ///  ```
-    /// yetii run
-    /// This command is useful for executing the main functionality of Yetii after it has been initialized and configured.
-    /// # Returns:
-    /// - A success message if the application runs successfully.
-    /// - An error message if the application fails to run.
 
+    /// Install and configure system prerequisites required by the YAML database configuration.
+    #[clap(name = "setup")]
+    Setup {
+        /// Print the required changes without installing or registering anything.
+        #[clap(long)]
+        dry_run: bool,
+    },
+
+    /// Execute configured queries and deliver their rows to HTTP endpoints.
     #[clap(name = "run")]
-    Run{
-        /// name of the query to run
-        /// This option allows you to specify a specific query to run.
-        /// # Example usage:
-        /// ```
-        /// yetii run --query my_query
-        /// ```
-        /// This is useful for executing a specific query without running all configured queries.
+    Run {
+        /// Name of one query to run. Runs all enabled queries when omitted.
         #[clap(short, long)]
         query: Option<String>,
 
-        /// force the execution of the query even if it is not enabled
-        /// This flag allows you to force the execution of a query even if it is marked as disabled in the configuration.
-        /// # Example usage:
-        /// ```
-        /// yetii run --force
-        /// ```
+        /// Run disabled queries too.
         #[clap(short, long)]
-        force: Option<bool>,
+        force: bool,
     },
-    /// Check Yetii configuration
-    /// This command checks the Yetii configuration for validity and completeness.
-    /// It will validate the configuration file and ensure that all required settings are present.
-    /// # Example usage:
-    /// ```
-    /// yetii check-config
-    /// ```
-    /// This command is useful for verifying that the Yetii configuration is set up correctly before running any operations.
-    /// # Returns:
-    /// - A success message if the configuration is valid.
-    /// - An error message if the configuration is invalid or incomplete.
+
+    /// Validate the Yetii configuration.
     #[clap(name = "check-config")]
     CheckConfig,
+
+    /// Run scheduled queries continuously.
+    #[clap(name = "daemon")]
+    Daemon {
+        #[clap(subcommand)]
+        command: DaemonCommand,
+    },
 }
 
+#[derive(Subcommand)]
+pub enum DaemonCommand {
+    /// Start the scheduler daemon.
+    Start {
+        /// Start in the background and return immediately.
+        #[clap(long)]
+        detach: bool,
+
+        /// PID file used by detached/status/stop.
+        #[clap(long, default_value = ".yetii/yetii.pid")]
+        pid_file: String,
+
+        /// Log file used when starting detached.
+        #[clap(long, default_value = ".yetii/yetii.log")]
+        log_file: String,
+    },
+
+    /// Report whether the daemon PID is running.
+    Status {
+        /// PID file to inspect.
+        #[clap(long, default_value = ".yetii/yetii.pid")]
+        pid_file: String,
+    },
+
+    /// Stop the daemon process recorded in the PID file.
+    Stop {
+        /// PID file to inspect and remove.
+        #[clap(long, default_value = ".yetii/yetii.pid")]
+        pid_file: String,
+    },
+}

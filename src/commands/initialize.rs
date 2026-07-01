@@ -1,16 +1,13 @@
-/// The creation of this file was inspired by the `cargo init` command.
-use std::collections::HashMap;
-use std::error::Error;
-use std::io::{self, Write};
-use std::path::Path;
 use crate::config::connection_config::ConnectionConfig;
-use crate::config::database::{AuthConfig, DatabaseConfig, DatabaseType};
+use crate::config::database::{AuthConfig, DatabaseConfig, DatabaseConfigs, DatabaseType};
 use crate::config::endpoint_config::{EndpointAuth, EndpointConfig, ResponseConfig};
 use crate::config::error_handling::ErrorHandling;
 use crate::config::execution_config::{ExecutionConfig, SchedulerConfig, StateManagement};
 use crate::config::global_settings::{GlobalSettings, Logging};
 use crate::config::logging::LogRotation;
-use crate::config::monitor_config::{HealthCheckConfig, MetricsConfig, MonitoringConfig, NotificationChannel, NotificationSettings};
+use crate::config::monitor_config::{
+    HealthCheckConfig, MetricsConfig, MonitoringConfig, NotificationChannel, NotificationSettings,
+};
 use crate::config::query_config::QueryConfig;
 use crate::config::request_config::RequestConfig;
 use crate::config::schedule_config::ScheduleConfig;
@@ -18,6 +15,11 @@ use crate::config::security_settings::SecuritySettings;
 use crate::config::sql_query::{QueryParameter, QueryValidation, SqlQuery};
 use crate::config::transform_config::{DataConversion, DataFilter, TransformConfig};
 use crate::config::yetii::YetiiConfig;
+/// The creation of this file was inspired by the `cargo init` command.
+use std::collections::HashMap;
+use std::error::Error;
+use std::io::{self, Write};
+use std::path::Path;
 /// Initializes the Yetii configuration file with default values and helpful comments.
 /// # Arguments
 /// * `config_name`: The name of the configuration file to be created.
@@ -54,17 +56,19 @@ fn save_yaml_file_simple(full_path: &str, yaml_string: &str) -> Result<(), Strin
     let file_path = Path::new(full_path);
 
     // Create parent directory if it doesn't exist
-    if let Some(parent_dir) = file_path.parent() {
-        if !parent_dir.exists() {
-            std::fs::create_dir_all(parent_dir)
-                .map_err(|e| format!("Failed to create directory: {}", e))?;
-        }
+    if let Some(parent_dir) = file_path.parent()
+        && !parent_dir.exists()
+    {
+        std::fs::create_dir_all(parent_dir)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 
     // Check if file exists and prompt for overwrite
     if file_path.exists() {
         print!("File '{}' already exists. Overwrite? (y/N): ", full_path);
-        io::stdout().flush().map_err(|e| format!("Failed to flush stdout: {}", e))?;
+        io::stdout()
+            .flush()
+            .map_err(|e| format!("Failed to flush stdout: {}", e))?;
 
         let mut input = String::new();
         io::stdin()
@@ -85,11 +89,14 @@ fn save_yaml_file_simple(full_path: &str, yaml_string: &str) -> Result<(), Strin
 }
 fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error>> {
     let mut query_parameters = HashMap::new();
-    query_parameters.insert("last_run_time".to_string(), QueryParameter {
-        param_type: "timestamp".to_string(),
-        default: Some("1970-01-01T00:00:00Z".to_string()),
-        source: Some("state_file".to_string()),
-    });
+    query_parameters.insert(
+        "last_run_time".to_string(),
+        QueryParameter {
+            param_type: "timestamp".to_string(),
+            default: Some("1970-01-01T00:00:00Z".to_string()),
+            source: Some("state_file".to_string()),
+        },
+    );
 
     let mut field_mappings = HashMap::new();
     field_mappings.insert("id".to_string(), "customer_id".to_string());
@@ -97,11 +104,14 @@ fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error
     field_mappings.insert("email".to_string(), "email_address".to_string());
 
     let mut data_conversions = HashMap::new();
-    data_conversions.insert("created_at".to_string(), DataConversion {
-        from: "timestamp".to_string(),
-        to: "iso8601_string".to_string(),
-        format: None,
-    });
+    data_conversions.insert(
+        "created_at".to_string(),
+        DataConversion {
+            from: "timestamp".to_string(),
+            to: "iso8601_string".to_string(),
+            format: None,
+        },
+    );
 
     let mut headers = HashMap::new();
     headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -111,10 +121,12 @@ fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error
         version: Some("1.0.0".to_string()),
         name: Some(config_name.to_string()),
         description: Some("Yetii configuration for ERP data integration and transformation".to_string()),
-        databases: DatabaseConfig {
+        databases: DatabaseConfigs::from(DatabaseConfig {
             name: "main_erp".to_string(),
             db_type: DatabaseType::Postgres,
+            driver: None,
             connection_string: None,
+            connection_options: Default::default(),
             host: "localhost".to_string(),
             port: 5432,
             database: "erp_db".to_string(),
@@ -128,7 +140,7 @@ fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error
                 timeout_seconds: Some(30),
                 retry_attempts: Some(3),
             },
-        },
+        }),
         global_settings: GlobalSettings {
             environment: "development".to_string(),
             error_handling: ErrorHandling {
@@ -254,7 +266,8 @@ fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error
 fn generate_commented_yaml(config: &YetiiConfig) -> Result<String, Box<dyn Error>> {
     let yaml = serde_yaml::to_string(config)?;
 
-    let commented_yaml = format!(r#"# Yetii Configuration File
+    let commented_yaml = format!(
+        r#"# Yetii Configuration File
 # Version: {}
 # Description: {}
 #
@@ -293,39 +306,14 @@ fn generate_commented_yaml(config: &YetiiConfig) -> Result<String, Box<dyn Error
 # - Recommended for passwords, API keys, and environment-specific values
 #
 # For more information, visit: https://docs.yetii.io
-"#, config.version.as_deref().unwrap_or("0.0.1"),
-                                 config.description.as_ref().unwrap_or(&"Yetii ERP Integration".to_string()), yaml
+"#,
+        config.version.as_deref().unwrap_or("0.0.1"),
+        config
+            .description
+            .as_ref()
+            .unwrap_or(&"Yetii ERP Integration".to_string()),
+        yaml
     );
 
     Ok(commented_yaml)
-}
-fn save_yaml_file(path: &str, full_path: &str, yaml_string: &str) -> Result<(), String> {
-    // Create directory if it doesn't exist
-    if !Path::new(path).exists() {
-        std::fs::create_dir_all(path)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
-    }
-
-    // Check if file exists
-    if Path::new(full_path).exists() {
-        // Prompt for overwrite
-        print!("File '{}' already exists. Overwrite? (y/N): ", full_path);
-        io::stdout().flush().map_err(|e| format!("Failed to flush stdout: {}", e))?;
-
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| format!("Failed to read user input: {}", e))?;
-
-        let input = input.trim().to_lowercase();
-        if input != "y" && input != "yes" {
-            return Err("Aborted by user.".into());
-        }
-    }
-
-    // Write YAML to file
-    std::fs::write(full_path, yaml_string)
-        .map_err(|e| format!("Failed to write configuration file: {}", e))?;
-
-    Ok(())
 }

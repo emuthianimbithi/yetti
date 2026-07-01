@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use crate::config::ConfigError;
 use serde::{Deserialize, Serialize};
-use crate::config::{ConfigError};
+use std::collections::HashMap;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SqlQuery {
     pub sql: String,

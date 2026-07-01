@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
 use crate::config::ConfigError;
-use crate::config::utils::default_timeout_seconds;
 use crate::config::utils::default_false;
+use crate::config::utils::default_timeout_seconds;
 use crate::config::utils::default_true;
+use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SecuritySettings {
     #[serde(default = "default_false")]
@@ -24,7 +24,7 @@ impl Default for SecuritySettings {
 impl SecuritySettings {
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.timeout_seconds > Some(600) {
-            return Err(ConfigError::InvalidTimeout(Option::from(self.timeout_seconds)));
+            return Err(ConfigError::InvalidTimeout(self.timeout_seconds));
         }
         Ok(())
     }

@@ -1,106 +1,91 @@
-pub(crate) mod yetii;
-pub(crate) mod database;
-pub(crate) mod global_settings;
 pub(crate) mod connection_config;
+pub(crate) mod database;
+pub(crate) mod endpoint_config;
+mod environment_config;
 pub(crate) mod error_handling;
-pub(crate) mod query_config;
-pub(crate) mod schedule_config;
-mod utils;
-pub(crate) mod security_settings;
+pub(crate) mod execution_config;
+pub(crate) mod global_settings;
 pub(crate) mod logging;
+pub(crate) mod monitor_config;
+pub(crate) mod query_config;
+pub(crate) mod request_config;
+pub(crate) mod schedule_config;
+pub(crate) mod security_settings;
 pub(crate) mod sql_query;
 pub(crate) mod transform_config;
-pub(crate) mod endpoint_config;
-pub(crate) mod request_config;
-pub(crate) mod execution_config;
-pub(crate) mod monitor_config;
-mod environment_config;
+mod utils;
+pub(crate) mod yetii;
 
-use std::fmt;
 use once_cell::sync::OnceCell;
 use std::sync::RwLock;
 
 pub static CONFIG: OnceCell<RwLock<yetii::YetiiConfig>> = OnceCell::new();
 
-// Custom error type for configuration validation
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    #[error("invalid database type: {0}")]
     InvalidDatabaseType(String),
+    #[error("invalid schedule format: {0}")]
     InvalidSchedule(String),
+    #[error("missing required field: {0}")]
     MissingRequiredField(String),
+    #[error("invalid timeout value: {0:?}")]
     InvalidTimeout(Option<u32>),
+    #[error("invalid port: {0}")]
+    InvalidPort(u16),
+    #[error("invalid HTTP method: {0}")]
+    InvalidHttpMethod(String),
+    #[error("invalid execution mode: {0}")]
+    InvalidExecutionMode(String),
+    #[error("invalid configuration value for {field}: {value}")]
+    InvalidValue { field: String, value: String },
+    #[error("configuration not initialized; call load_config_once() first")]
     NotInitialized,
+    #[error("configuration lock is poisoned")]
     LockPoisoned,
-    IoError(std::io::Error),
-    SerializationError(serde_yaml::Error),
+    #[error("I/O error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("configuration serialization error: {0}")]
+    SerializationError(#[from] serde_yaml::Error),
+    #[error("configuration has already been initialized")]
     ConfigAlreadySet,
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ConfigError::InvalidDatabaseType(db_type) => {
-                write!(f, "Invalid database type: {}", db_type)
-            }
-            ConfigError::InvalidSchedule(schedule) => {
-                write!(f, "Invalid schedule format: {}", schedule)
-            }
-            ConfigError::MissingRequiredField(field) => {
-                write!(f, "Missing required field: {}", field)
-            }
-            ConfigError::InvalidTimeout(timeout) => {
-                write!(f, "Invalid timeout value: {:?}", timeout)
-            }
-            ConfigError::NotInitialized => {
-                write!(f, "Configuration not initialized. Call load_config_once() first")
-            }
-            ConfigError::LockPoisoned => {
-                write!(f, "Configuration lock is poisoned")
-            }
-            ConfigError::IoError(err) => {
-                write!(f, "IO error: {}", err)
-            }
-            ConfigError::SerializationError(err) => {
-                write!(f, "Serialization error: {}", err)
-            }
-            ConfigError::ConfigAlreadySet => {
-                write!(f, "Configuration has already been initialized")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ConfigError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ConfigError::IoError(err) => Some(err),
-            ConfigError::SerializationError(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for ConfigError {
-    fn from(err: std::io::Error) -> Self {
-        ConfigError::IoError(err)
-    }
-}
-
-impl From<serde_yaml::Error> for ConfigError {
-    fn from(err: serde_yaml::Error) -> Self {
-        ConfigError::SerializationError(err)
-    }
+    #[error("environment variable '{0}' referenced by configuration is not set")]
+    MissingEnvironmentVariable(String),
 }
 
 /// Load configuration from a file path
 pub fn load_config(path: &str) -> Result<yetii::YetiiConfig, ConfigError> {
     let content = std::fs::read_to_string(path)?;
+    let content = interpolate_env_vars(&content)?;
     let config: yetii::YetiiConfig = serde_yaml::from_str(&content)?;
 
     // Validate the configuration
-    validate_config(&config)?;
+    config.validate()?;
 
     Ok(config)
+}
+
+fn interpolate_env_vars(content: &str) -> Result<String, ConfigError> {
+    let mut output = String::with_capacity(content.len());
+    let mut rest = content;
+
+    while let Some(start) = rest.find("${") {
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find('}') else {
+            output.push_str(&rest[start..]);
+            return Ok(output);
+        };
+
+        let name = &after_start[..end];
+        let value = std::env::var(name)
+            .map_err(|_| ConfigError::MissingEnvironmentVariable(name.to_string()))?;
+        output.push_str(&value);
+        rest = &after_start[end + 1..];
+    }
+
+    output.push_str(rest);
+    Ok(output)
 }
 
 /// Load configuration once into the global CONFIG static
@@ -112,108 +97,191 @@ pub fn load_config_once(path: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Reload configuration from file path
-pub fn reload_config(path: &str) -> Result<(), ConfigError> {
-    let new_config = load_config(path)?;
-
-    let config = CONFIG.get().ok_or(ConfigError::NotInitialized)?;
-    let mut guard = config.write().map_err(|_| ConfigError::LockPoisoned)?;
-    *guard = new_config;
-
-    println!("🔄 Config reloaded successfully");
-    Ok(())
-}
-
 /// Get a read guard to the global configuration
 /// Returns an error if config is not initialized or lock is poisoned
-pub fn get_config() -> Result<std::sync::RwLockReadGuard<'static, yetii::YetiiConfig>, ConfigError> {
+pub fn get_config() -> Result<std::sync::RwLockReadGuard<'static, yetii::YetiiConfig>, ConfigError>
+{
     let config = CONFIG.get().ok_or(ConfigError::NotInitialized)?;
     config.read().map_err(|_| ConfigError::LockPoisoned)
 }
 
-/// Get a read guard to the global configuration (unsafe version for internal use)
-/// Panics if config is not initialized or lock is poisoned
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[allow(unused)]
-pub(crate) fn get_config_unchecked() -> std::sync::RwLockReadGuard<'static, yetii::YetiiConfig> {
-    CONFIG
-        .get()
-        .expect("CONFIG not initialized")
-        .read()
-        .expect("CONFIG lock poisoned")
-}
-
-/// Check if the global configuration has been initialized
-pub fn is_config_initialized() -> bool {
-    CONFIG.get().is_some()
-}
-
-/// Validate a configuration struct
-pub fn validate_config(config: &yetii::YetiiConfig) -> Result<(), ConfigError> {
-    // Validate database configuration
-    if config.databases.host.trim().is_empty() {
-        return Err(ConfigError::MissingRequiredField("databases.host".to_string()));
-    }
-
-    if config.databases.database.trim().is_empty() {
-        return Err(ConfigError::MissingRequiredField("databases.database".to_string()));
-    }
-
-    #[allow(unused_comparisons)]
-    // Validate port range
-    if config.databases.port == 0 || config.databases.port > 65535 {
-        return Err(ConfigError::MissingRequiredField("databases.port must be between 1 and 65535".to_string()));
-    }
-
-    // Validate timeout values
-    if let Some(timeout) = config.databases.pool.timeout_seconds {
-        if timeout == 0 {
-            return Err(ConfigError::InvalidTimeout(Some(timeout)));
-        }
-    }
-
-    // Validate global settings
-    if config.global_settings.environment.trim().is_empty() {
-        return Err(ConfigError::MissingRequiredField("global_settings.environment".to_string()));
-    }
-
-    // Validate queries
-    for (index, query) in config.queries.iter().enumerate() {
-        if query.name.trim().is_empty() {
-            return Err(ConfigError::MissingRequiredField(
-                format!("queries[{}].name", index)
-            ));
+    #[test]
+    fn interpolates_environment_variables_in_yaml_content() {
+        unsafe {
+            std::env::set_var("YETII_TEST_SECRET", "resolved-secret");
         }
 
-        if query.query.sql.trim().is_empty() {
-            return Err(ConfigError::MissingRequiredField(
-                format!("queries[{}].query.sql", index)
-            ));
-        }
+        let content = "password: ${YETII_TEST_SECRET}\n";
 
-        // Validate schedule if present
-        if let Some(schedule) = &query.schedule {
-            if schedule.enabled && schedule.cron.trim().is_empty() {
-                return Err(ConfigError::InvalidSchedule(
-                    format!("Empty cron expression for query '{}'", query.name)
-                ));
-            }
-        }
-
-        // Validate endpoint URL
-        if query.endpoint.url.trim().is_empty() {
-            return Err(ConfigError::MissingRequiredField(
-                format!("queries[{}].endpoint.url", index)
-            ));
-        }
+        assert_eq!(
+            "password: resolved-secret\n",
+            interpolate_env_vars(content).unwrap()
+        );
     }
 
-    // Validate execution settings
-    if let Some(timeout) = config.execution.global_timeout_minutes {
-        if timeout == 0 {
-            return Err(ConfigError::InvalidTimeout(Some(timeout)));
+    #[test]
+    fn missing_environment_variable_is_an_error() {
+        unsafe {
+            std::env::remove_var("YETII_TEST_MISSING");
         }
+
+        assert!(matches!(
+            interpolate_env_vars("${YETII_TEST_MISSING}"),
+            Err(ConfigError::MissingEnvironmentVariable(name)) if name == "YETII_TEST_MISSING"
+        ));
     }
 
-    Ok(())
+    #[test]
+    fn single_database_object_yaml_still_loads() {
+        let config: yetii::YetiiConfig = serde_yaml::from_str(
+            r#"
+version: "1.0.0"
+databases:
+  name: main
+  type: postgres
+  host: localhost
+  port: 5432
+  database: postgres
+  auth:
+    username: null
+    password: null
+queries: []
+"#,
+        )
+        .unwrap();
+
+        config.validate().unwrap();
+        assert_eq!(1, config.databases.len());
+        assert!(config.databases.get("main").is_some());
+    }
+
+    #[test]
+    fn database_list_yaml_loads() {
+        let config: yetii::YetiiConfig = serde_yaml::from_str(
+            r#"
+version: "1.0.0"
+databases:
+  - name: erp
+    type: postgres
+    host: localhost
+    port: 5432
+    database: postgres
+    auth:
+      username: null
+      password: null
+  - name: billing
+    type: mssql
+    host: sql.example.test
+    port: 1433
+    database: billing
+    auth:
+      username: user
+      password: pass
+queries: []
+"#,
+        )
+        .unwrap();
+
+        config.validate().unwrap();
+        assert_eq!(2, config.databases.len());
+        assert!(config.databases.get("erp").is_some());
+        assert!(config.databases.get("billing").is_some());
+    }
+
+    #[test]
+    fn duplicate_database_names_fail_validation() {
+        let config: yetii::YetiiConfig = serde_yaml::from_str(
+            r#"
+version: "1.0.0"
+databases:
+  - name: main
+    type: postgres
+    host: localhost
+    port: 5432
+    database: postgres
+    auth:
+      username: null
+      password: null
+  - name: main
+    type: postgres
+    host: localhost
+    port: 5432
+    database: postgres
+    auth:
+      username: null
+      password: null
+queries: []
+"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue { field, .. }) if field == "databases.name"
+        ));
+    }
+
+    #[test]
+    fn multiple_databases_require_query_database() {
+        let config: yetii::YetiiConfig =
+            serde_yaml::from_str(&multi_database_query_yaml(None)).unwrap();
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::MissingRequiredField(field)) if field == "query 'sync'.database"
+        ));
+    }
+
+    #[test]
+    fn unknown_query_database_fails_validation() {
+        let config: yetii::YetiiConfig =
+            serde_yaml::from_str(&multi_database_query_yaml(Some("missing"))).unwrap();
+
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue { field, value })
+                if field == "query 'sync'.database" && value == "missing"
+        ));
+    }
+
+    fn multi_database_query_yaml(database: Option<&str>) -> String {
+        let database_line = database
+            .map(|name| format!("    database: {name}\n"))
+            .unwrap_or_default();
+        format!(
+            r#"
+version: "1.0.0"
+databases:
+  - name: erp
+    type: postgres
+    host: localhost
+    port: 5432
+    database: postgres
+    auth:
+      username: null
+      password: null
+  - name: billing
+    type: postgres
+    host: localhost
+    port: 5432
+    database: postgres
+    auth:
+      username: null
+      password: null
+queries:
+  - name: sync
+    description: sync
+    enabled: true
+{database_line}    query:
+      sql: SELECT 1
+    endpoint:
+      url: http://127.0.0.1/sync
+      method: POST
+"#
+        )
+    }
 }

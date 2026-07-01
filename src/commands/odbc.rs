@@ -1,8 +1,7 @@
-use std::error::Error;
 use std::io;
 use std::process::Command;
 
-pub fn check_odbc_drivers() -> Result<String, Box<dyn Error>> {
+pub fn check_odbc_drivers() -> anyhow::Result<String> {
     #[cfg(target_os = "windows")]
     {
         let output = Command::new("powershell")
@@ -16,12 +15,12 @@ pub fn check_odbc_drivers() -> Result<String, Box<dyn Error>> {
                     Ok(result)
                 } else {
                     let err = String::from_utf8_lossy(&output.stderr);
-                    Err(format!("PowerShell command failed: {}", err).into())
+                    anyhow::bail!("PowerShell command failed: {}", err)
                 }
             }
             Err(e) => {
                 if e.kind() == io::ErrorKind::NotFound {
-                    Err("PowerShell not found on this system".into())
+                    anyhow::bail!("PowerShell not found on this system")
                 } else {
                     Err(e.into())
                 }
@@ -31,9 +30,7 @@ pub fn check_odbc_drivers() -> Result<String, Box<dyn Error>> {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        let output = Command::new("odbcinst")
-            .arg("-j")
-            .output();
+        let output = Command::new("odbcinst").arg("-j").output();
 
         match output {
             Ok(output) => {
@@ -42,12 +39,12 @@ pub fn check_odbc_drivers() -> Result<String, Box<dyn Error>> {
                     Ok(result)
                 } else {
                     let err = String::from_utf8_lossy(&output.stderr);
-                    Err(format!("`odbcinst` command failed: {}", err).into())
+                    anyhow::bail!("`odbcinst` command failed: {}", err)
                 }
             }
             Err(e) => {
                 if e.kind() == io::ErrorKind::NotFound {
-                    Err("`odbcinst` not found. Please install unixODBC.".into())
+                    anyhow::bail!("`odbcinst` not found. Please install unixODBC.")
                 } else {
                     Err(e.into())
                 }

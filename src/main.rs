@@ -1,56 +1,37 @@
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use tracing_subscriber::EnvFilter;
+
 mod cli;
 mod commands;
-mod database;
 mod config;
-use notify::{Watcher, RecursiveMode, Config, RecommendedWatcher, EventKind};
-use std::sync::mpsc::channel;
-use std::thread;
+mod database;
+mod http;
+mod state;
+mod transform;
 
-fn watch_config_file(path: String) {
-    thread::spawn(move || {
-        let (tx, rx) = channel();
+#[tokio::main]
+async fn main() -> Result<()> {
+    let yetii = cli::Yetii::parse();
+    initialize_tracing(yetii.verbose)?;
 
-        let mut watcher = RecommendedWatcher::new(tx, Config::default()).expect("Watcher failed");
-        watcher.watch((&path).as_ref(), RecursiveMode::NonRecursive).expect("Watch failed");
+    if !matches!(yetii.commands, cli::Commands::Init { .. }) {
+        config::load_config_once(&yetii.file)
+            .with_context(|| format!("failed to load configuration '{}'", yetii.file))?;
+    }
 
-        println!("👀 Watching config file: {}", path);
-
-        while let Ok(event) = rx.recv() {
-            if let Ok(e) = event {
-                if matches!(e.kind, EventKind::Modify(_)) {
-                    config::reload_config(&path).
-                        expect("Failed to reload config");
-                }
-            }
-        }
-    });
+    commands::going_through_commands(&yetii).await
 }
 
-fn main() {
-    let yetii = cli::Yetii::parse();
+fn initialize_tracing(verbose: bool) -> Result<()> {
+    let default_level = if verbose { "debug" } else { "info" };
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
 
-    // Handle init command separately since it doesn't need existing config
-    if matches!(yetii.commands, cli::Commands::Init { .. }) {
-        commands::going_through_commands(&yetii);
-        return;
-    }
-
-    // For all other commands, load and validate config
-    if let Err(e) = config::load_config_once(&yetii.file) {
-        eprintln!("❌ Failed to load config: {}", e);
-        std::process::exit(1);
-    }
-
-    if !config::is_config_initialized() {
-        eprintln!("❌ Yetii configuration is not initialized. Please run `yetii init` first.");
-        std::process::exit(1);
-    }
-
-    // Only start file watcher for the `run` command (assuming it's long-running)
-    if matches!(yetii.commands, cli::Commands::Run { .. }) {
-        watch_config_file(yetii.file.clone());
-    }
-
-    commands::going_through_commands(&yetii);
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .json()
+        .try_init()
+        .map_err(|error| anyhow!("failed to initialize tracing: {error}"))
 }

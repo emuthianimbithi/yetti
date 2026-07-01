@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::config::ConfigError;
 use crate::config::utils::{default_log_format, default_log_level, default_log_output};
+use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Logging {
     #[serde(default = "default_log_level")]

@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::config::utils::default_request_format;
+use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RequestConfig {
     #[serde(default = "default_request_format")]

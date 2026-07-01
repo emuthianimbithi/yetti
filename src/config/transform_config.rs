@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use crate::config::{ConfigError};
+use crate::config::ConfigError;
 use crate::config::utils::default_true;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TransformConfig {
     #[serde(default = "default_true")]

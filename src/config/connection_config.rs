@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
 use crate::config::ConfigError;
 use crate::config::utils::default_max_connections;
 use crate::config::utils::default_retry_attempts;
 use crate::config::utils::default_timeout_seconds;
+use serde::{Deserialize, Serialize};
 /// Enhanced connection config with validation
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ConnectionConfig {
@@ -16,9 +16,9 @@ pub struct ConnectionConfig {
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
-            max_connections: Option::from(default_max_connections()),
-            timeout_seconds: Option::from(default_timeout_seconds()),
-            retry_attempts: Option::from(default_retry_attempts()),
+            max_connections: default_max_connections(),
+            timeout_seconds: default_timeout_seconds(),
+            retry_attempts: default_retry_attempts(),
         }
     }
 }

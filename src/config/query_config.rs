@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
 use crate::config::ConfigError;
 use crate::config::endpoint_config::EndpointConfig;
 use crate::config::schedule_config::ScheduleConfig;
 use crate::config::sql_query::SqlQuery;
 use crate::config::transform_config::TransformConfig;
 use crate::config::utils::default_true;
+use serde::{Deserialize, Serialize};
 /// Enhanced query config with validation
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct QueryConfig {

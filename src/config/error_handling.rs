@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
 use crate::config::ConfigError;
 use crate::config::utils::default_error_action;
 use crate::config::utils::default_max_retries;
+use serde::{Deserialize, Serialize};
 /// Enhanced error handling with validation
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ErrorHandling {
@@ -29,7 +29,10 @@ impl ErrorHandling {
         let valid_actions = ["stop", "log_and_continue", "retry"];
 
         if !valid_actions.contains(&self.on_query_error.as_str()) {
-            return Err(ConfigError::InvalidDatabaseType(self.on_query_error.clone()));
+            return Err(ConfigError::InvalidValue {
+                field: "global_settings.error_handling.on_query_error".to_string(),
+                value: self.on_query_error.clone(),
+            });
         }
 
         if self.max_retries > 10 {

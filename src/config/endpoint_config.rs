@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crate::config::ConfigError;
 pub use crate::config::request_config::RequestConfig;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EndpointConfig {
@@ -17,12 +17,29 @@ pub struct EndpointConfig {
 impl EndpointConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.url.is_empty() {
-            return Err(ConfigError::MissingRequiredField("endpoint.url".to_string()));
+            return Err(ConfigError::MissingRequiredField(
+                "endpoint.url".to_string(),
+            ));
         }
 
-        let valid_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "WRITE"];
-        if !valid_methods.contains(&self.method.as_str()) {
-            return Err(ConfigError::InvalidDatabaseType(self.method.clone()));
+        let method = self.method.to_ascii_uppercase();
+        let valid_methods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+        if !valid_methods.contains(&method.as_str()) {
+            return Err(ConfigError::InvalidHttpMethod(self.method.clone()));
+        }
+
+        if self.request.format != "json" {
+            return Err(ConfigError::InvalidValue {
+                field: "endpoint.request.format".to_string(),
+                value: self.request.format.clone(),
+            });
+        }
+
+        if self.request.batch_size == Some(0) {
+            return Err(ConfigError::InvalidValue {
+                field: "endpoint.request.batch_size".to_string(),
+                value: "0".to_string(),
+            });
         }
 
         Ok(())
@@ -39,26 +56,28 @@ pub enum EndpointAuth {
         header_name: Option<String>,
     },
     #[serde(rename = "api_key")]
-    ApiKey {
-        header_name: String,
-        token: String,
-    },
+    ApiKey { header_name: String, token: String },
     #[serde(rename = "basic")]
-    Basic {
-        username: String,
-        password: String,
-    },
+    Basic { username: String, password: String },
     #[serde(rename = "oauth2")]
     OAuth2 {
         client_id: String,
         client_secret: String,
         token_url: String,
+        #[serde(default)]
+        scopes: Option<Vec<String>>,
+        #[serde(default)]
+        audience: Option<String>,
     },
 }
 
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ResponseConfig {
+    #[serde(default = "default_success_codes")]
     pub success_codes: Vec<u16>,
     pub handle_duplicates: String,
+}
+
+fn default_success_codes() -> Vec<u16> {
+    vec![200, 201, 202, 204]
 }
