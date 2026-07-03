@@ -1,0 +1,88 @@
+name: Docker
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/yetii
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build and smoke-test Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=sha,prefix=sha-
+
+      - name: Build Docker image for smoke tests
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: yetii:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test image commands
+        run: |
+          docker run --rm yetii:test --help
+          docker run --rm yetii:test odbc
+          docker run --rm yetii:test odbcinst -q -d
+
+      - name: Smoke-test config validation
+        run: |
+          docker run --rm \
+            -v "$PWD/examples/docker-compose/yetii.yaml:/etc/yetii/yetii.yaml:ro" \
+            -e ERP_PASSWORD=yetii \
+            -e API_TOKEN=smoke-token \
+            yetii:test check-config
+          docker run --rm \
+            -v "$PWD/examples/docker-compose/yetii.yaml:/etc/yetii/yetii.yaml:ro" \
+            -e ERP_PASSWORD=yetii \
+            -e API_TOKEN=smoke-token \
+            yetii:test setup --check-only
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Docker image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

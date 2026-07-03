@@ -29,6 +29,10 @@ pub enum Commands {
         /// Print the required changes without installing or registering anything.
         #[clap(long)]
         dry_run: bool,
+
+        /// Verify required ODBC drivers are already installed and exit non-zero if any are missing.
+        #[clap(long)]
+        check_only: bool,
     },
 
     /// Execute configured queries and deliver their rows to HTTP endpoints.

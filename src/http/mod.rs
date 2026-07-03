@@ -59,10 +59,19 @@ impl HttpSender {
         endpoint: &EndpointConfig,
         rows: &[Value],
     ) -> Result<SendOutcome, HttpError> {
+        self.send_value(endpoint, &Value::Array(rows.to_vec()))
+            .await
+    }
+
+    pub async fn send_value(
+        &self,
+        endpoint: &EndpointConfig,
+        body: &Value,
+    ) -> Result<SendOutcome, HttpError> {
         let mut retry_index = 0;
 
         loop {
-            match self.send_once(endpoint, rows).await {
+            match self.send_once(endpoint, body).await {
                 Ok(outcome) => return Ok(outcome),
                 Err(error)
                     if retry_index < self.retry_policy.max_retries && error.is_retryable() =>
@@ -87,15 +96,15 @@ impl HttpSender {
     async fn send_once(
         &self,
         endpoint: &EndpointConfig,
-        rows: &[Value],
+        body: &Value,
     ) -> Result<SendOutcome, HttpError> {
-        let response = self.execute_request(endpoint, rows, false).await?;
+        let response = self.execute_request(endpoint, body, false).await?;
         if response.status() == StatusCode::UNAUTHORIZED
             && matches!(endpoint.auth, Some(EndpointAuth::OAuth2 { .. }))
         {
             tracing::warn!("endpoint returned 401; refreshing OAuth2 token and retrying once");
             return self
-                .validate_response(endpoint, self.execute_request(endpoint, rows, true).await?)
+                .validate_response(endpoint, self.execute_request(endpoint, body, true).await?)
                 .await;
         }
 
@@ -105,7 +114,7 @@ impl HttpSender {
     async fn execute_request(
         &self,
         endpoint: &EndpointConfig,
-        rows: &[Value],
+        body: &Value,
         refresh_oauth2: bool,
     ) -> Result<reqwest::Response, HttpError> {
         let method = parse_method(&endpoint.method)?;
@@ -140,7 +149,7 @@ impl HttpSender {
             };
         }
 
-        request.json(rows).send().await.map_err(HttpError::Request)
+        request.json(body).send().await.map_err(HttpError::Request)
     }
 
     async fn validate_response(

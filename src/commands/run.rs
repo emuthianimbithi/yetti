@@ -2,7 +2,8 @@ use crate::config;
 use crate::config::query_config::QueryConfig;
 use crate::database::{self, QueryRequest};
 use crate::http::HttpSender;
-use crate::monitoring::{self, NotificationEvent};
+use crate::monitoring;
+use crate::notifications::{self, NotificationEvent};
 use crate::state::{self, StateStore, WatermarkUpdate, YetiiState};
 use crate::transform;
 use anyhow::{Context, Result, anyhow, bail};
@@ -47,6 +48,7 @@ impl fmt::Display for RunReport {
 }
 
 pub async fn run(query_name: Option<&str>, force: bool) -> Result<RunReport> {
+    let run_started = Instant::now();
     let config = config::get_config()?.clone();
     let selected_queries = select_queries(&config.queries, query_name, force)?;
     let state_store = config
@@ -156,6 +158,22 @@ pub async fn run(query_name: Option<&str>, force: bool) -> Result<RunReport> {
         failures = report.failures.len(),
         "run completed"
     );
+    let run_event = NotificationEvent::run_outcome(
+        report.failures.is_empty(),
+        report.rows_read,
+        report.pages_read,
+        report.batches_sent,
+        report.failures.len(),
+        run_started.elapsed(),
+    );
+    if let Err(notification_error) =
+        notifications::notify(config.monitoring.as_ref(), &run_event).await
+    {
+        tracing::warn!(
+            error = %notification_error,
+            "run notification delivery failed"
+        );
+    }
     Ok(report)
 }
 
@@ -176,17 +194,16 @@ async fn record_query_outcome(
     } else {
         monitoring::query_failed(&query.name, error, rows, pages, batches, duration);
     }
-    let event = NotificationEvent {
+    let event = NotificationEvent::query_outcome(
+        query.name.clone(),
         success,
-        query: query.name.clone(),
-        rows_read: rows,
-        pages_read: pages,
-        batches_sent: batches,
-        duration_ms: duration.as_millis().min(u64::MAX as u128) as u64,
-        error: (!success).then(|| error.to_string()),
-        occurred_at: Utc::now(),
-    };
-    if let Err(notification_error) = monitoring::notify(monitoring_config, &event).await {
+        (!success).then(|| error.to_string()),
+        rows,
+        pages,
+        batches,
+        duration,
+    );
+    if let Err(notification_error) = notifications::notify(monitoring_config, &event).await {
         tracing::warn!(
             query = %query.name,
             error = %notification_error,

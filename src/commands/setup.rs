@@ -27,14 +27,29 @@ impl fmt::Display for SetupReport {
     }
 }
 
-pub async fn run(databases: &DatabaseConfigs, dry_run: bool) -> Result<SetupReport> {
+pub async fn run(
+    databases: &DatabaseConfigs,
+    dry_run: bool,
+    check_only: bool,
+) -> Result<SetupReport> {
     let databases = databases.clone();
-    tokio::task::spawn_blocking(move || run_all_blocking(&databases, dry_run))
+    tokio::task::spawn_blocking(move || run_all_blocking(&databases, dry_run, check_only))
         .await
         .context("setup worker failed")?
 }
 
-fn run_all_blocking(databases: &DatabaseConfigs, dry_run: bool) -> Result<SetupReport> {
+fn run_all_blocking(
+    databases: &DatabaseConfigs,
+    dry_run: bool,
+    check_only: bool,
+) -> Result<SetupReport> {
+    if dry_run && check_only {
+        bail!("setup --dry-run and --check-only cannot be used together");
+    }
+    if check_only {
+        return check_all_blocking(databases);
+    }
+
     let mut actions = Vec::new();
     let mut seen = HashSet::new();
 
@@ -55,6 +70,45 @@ fn run_all_blocking(databases: &DatabaseConfigs, dry_run: bool) -> Result<SetupR
     actions.sort();
     actions.dedup();
     Ok(SetupReport { actions })
+}
+
+fn check_all_blocking(databases: &DatabaseConfigs) -> Result<SetupReport> {
+    let installed = installed_driver_names()?;
+    let mut actions = Vec::new();
+    let mut missing = Vec::new();
+    let mut seen = HashSet::new();
+
+    for database in databases.as_slice() {
+        if database.connection_string.is_some() && database.driver.is_none() {
+            missing.push(format!(
+                "database '{}' uses database.connection_string; set databases.driver so setup --check-only can verify the required registered ODBC driver",
+                database.name
+            ));
+            continue;
+        }
+
+        let requested = requested_driver(database);
+        if !seen.insert(requested.to_string()) {
+            continue;
+        }
+
+        if installed.iter().any(|driver| driver == requested) {
+            actions.push(format!("driver '{requested}' is installed"));
+        } else {
+            missing.push(format!(
+                "database '{}' requires ODBC driver '{requested}', but it is not registered; installed drivers: {}",
+                database.name,
+                installed_driver_summary(&installed)
+            ));
+        }
+    }
+
+    if missing.is_empty() {
+        actions.sort();
+        return Ok(SetupReport { actions });
+    }
+
+    bail!("{}", missing.join("\n"));
 }
 
 fn run_blocking(database: &DatabaseConfig, dry_run: bool) -> Result<SetupReport> {
@@ -349,6 +403,29 @@ fn installed_drivers() -> Result<Vec<String>> {
         .filter(|line| !line.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn installed_driver_names() -> Result<Vec<String>> {
+    installed_drivers()
+}
+
+#[cfg(target_os = "windows")]
+fn installed_driver_names() -> Result<Vec<String>> {
+    installed_windows_drivers()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn installed_driver_names() -> Result<Vec<String>> {
+    bail!("ODBC driver checks are not supported on this operating system")
+}
+
+fn installed_driver_summary(installed: &[String]) -> String {
+    if installed.is_empty() {
+        "none".to_string()
+    } else {
+        installed.join(", ")
+    }
 }
 
 #[cfg(target_os = "macos")]

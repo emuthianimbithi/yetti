@@ -1,4 +1,4 @@
-use crate::config::monitor_config::{MonitoringConfig, NotificationChannel};
+use crate::config::monitor_config::MonitoringConfig;
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -41,18 +41,6 @@ struct QueryMetrics {
     last_success_at: Option<DateTime<Utc>>,
     last_failure_at: Option<DateTime<Utc>>,
     last_error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct NotificationEvent {
-    pub success: bool,
-    pub query: String,
-    pub rows_read: usize,
-    pub pages_read: usize,
-    pub batches_sent: usize,
-    pub duration_ms: u64,
-    pub error: Option<String>,
-    pub occurred_at: DateTime<Utc>,
 }
 
 #[derive(Default)]
@@ -322,43 +310,6 @@ yetii_query_last_duration_ms{{query=\"{name}\"}} {}\n",
     output
 }
 
-pub async fn notify(config: Option<&MonitoringConfig>, event: &NotificationEvent) -> Result<()> {
-    let Some(settings) = config
-        .filter(|config| config.enabled)
-        .and_then(|config| config.notifications.as_ref())
-    else {
-        return Ok(());
-    };
-    if (event.success && !settings.on_success) || (!event.success && !settings.on_failure) {
-        return Ok(());
-    }
-
-    let client = reqwest::Client::new();
-    let mut errors = Vec::new();
-    for channel in &settings.channels {
-        match channel {
-            NotificationChannel::Webhook { url } => match client.post(url).json(event).send().await
-            {
-                Ok(response) if response.status().is_success() => {}
-                Ok(response) => errors.push(format!(
-                    "notification webhook '{url}' returned {}",
-                    response.status()
-                )),
-                Err(error) => errors.push(format!("notification webhook '{url}' failed: {error}")),
-            },
-            NotificationChannel::Email { .. } => errors.push(
-                "email notifications require SMTP authentication/TLS settings and are not implemented"
-                    .to_string(),
-            ),
-        }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(anyhow!(errors.join("; ")))
-    }
-}
-
 fn escape_label(value: &str) -> String {
     value
         .replace('\\', "\\\\")
@@ -375,7 +326,6 @@ fn lock_metrics() -> std::sync::MutexGuard<'static, MetricsState> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::monitor_config::NotificationSettings;
 
     #[test]
     fn metrics_include_query_and_retry_counters() {
@@ -422,61 +372,5 @@ mod tests {
         assert!(metrics.contains("yetii_ready"));
 
         server.abort();
-    }
-
-    #[tokio::test]
-    async fn failure_notification_posts_to_webhook() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 4096];
-            loop {
-                let read = stream.read(&mut buffer).await.unwrap();
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..read]);
-                if request.windows(4).any(|window| window == b"\r\n\r\n")
-                    && String::from_utf8_lossy(&request).contains("\"query\":\"orders\"")
-                {
-                    break;
-                }
-            }
-            stream
-                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
-                .await
-                .unwrap();
-            String::from_utf8(request).unwrap()
-        });
-        let config = MonitoringConfig {
-            enabled: true,
-            metrics: None,
-            health_check: None,
-            notifications: Some(NotificationSettings {
-                on_failure: true,
-                on_success: false,
-                channels: vec![NotificationChannel::Webhook {
-                    url: format!("http://{address}/alert"),
-                }],
-            }),
-        };
-        let event = NotificationEvent {
-            success: false,
-            query: "orders".to_string(),
-            rows_read: 0,
-            pages_read: 0,
-            batches_sent: 0,
-            duration_ms: 10,
-            error: Some("failed".to_string()),
-            occurred_at: Utc::now(),
-        };
-
-        notify(Some(&config), &event).await.unwrap();
-
-        let request = server.await.unwrap();
-        assert!(request.starts_with("POST /alert HTTP/1.1"));
-        assert!(request.contains("\"success\":false"));
     }
 }

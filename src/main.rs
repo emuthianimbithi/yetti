@@ -8,6 +8,7 @@ mod config;
 mod database;
 mod http;
 mod monitoring;
+mod notifications;
 mod state;
 mod transform;
 
@@ -16,7 +17,10 @@ async fn main() -> Result<()> {
     let yetii = cli::Yetii::parse();
     initialize_tracing(yetii.verbose)?;
 
-    if !matches!(yetii.commands, cli::Commands::Init { .. }) {
+    if !matches!(
+        yetii.commands,
+        cli::Commands::Init { .. } | cli::Commands::CheckExistingOdbc
+    ) {
         config::load_config_once(&yetii.file)
             .with_context(|| format!("failed to load configuration '{}'", yetii.file))?;
     }

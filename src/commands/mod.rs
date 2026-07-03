@@ -23,9 +23,12 @@ pub async fn going_through_commands(yetii: &Yetii) -> Result<()> {
             let output = tokio::task::spawn_blocking(odbc::check_odbc_drivers).await??;
             println!("ODBC configuration:\n{output}");
         }
-        Commands::Setup { dry_run } => {
+        Commands::Setup {
+            dry_run,
+            check_only,
+        } => {
             let config = config::get_config()?.clone();
-            let report = setup::run(&config.databases, *dry_run).await?;
+            let report = setup::run(&config.databases, *dry_run, *check_only).await?;
             println!("{report}");
         }
         Commands::Run { query, force } => {

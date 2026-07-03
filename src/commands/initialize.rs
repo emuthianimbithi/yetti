@@ -6,7 +6,10 @@ use crate::config::execution_config::{ExecutionConfig, SchedulerConfig, StateMan
 use crate::config::global_settings::{GlobalSettings, Logging};
 use crate::config::logging::LogRotation;
 use crate::config::monitor_config::{
-    HealthCheckConfig, MetricsConfig, MonitoringConfig, NotificationChannel, NotificationSettings,
+    HealthCheckConfig, MetricsConfig, MonitoringConfig, NotificationEndpointConfig,
+    NotificationEventKind, NotificationPayloadConfig, NotificationResponseConfig,
+    NotificationRetryConfig, NotificationServiceConfig, NotificationServiceType,
+    NotificationSettings,
 };
 use crate::config::query_config::QueryConfig;
 use crate::config::request_config::RequestConfig;
@@ -269,13 +272,51 @@ fn create_default_config(config_name: &str) -> Result<YetiiConfig, Box<dyn Error
                 port: 8080,
             }),
             notifications: Some(NotificationSettings {
+                enabled: true,
                 on_failure: true,
                 on_success: false,
-                channels: vec![
-                    NotificationChannel::Webhook {
-                        url: "https://hooks.slack.com/services/...".to_string(),
-                    }
-                ],
+                channels: vec![],
+                services: vec![NotificationServiceConfig {
+                    name: "ops_api".to_string(),
+                    service_type: NotificationServiceType::Http,
+                    enabled: true,
+                    events: vec![NotificationEventKind::QueryFailure],
+                    endpoint: NotificationEndpointConfig {
+                        url: "https://ops.example.com/yetii/events".to_string(),
+                        method: "POST".to_string(),
+                    },
+                    auth: Some(EndpointAuth::Bearer {
+                        token: "$OPS_API_TOKEN".to_string(),
+                        header_name: None,
+                    }),
+                    headers: Some(HashMap::from([(
+                        "X-Source".to_string(),
+                        "yetii".to_string(),
+                    )])),
+                    payload: Some(NotificationPayloadConfig {
+                        format: "json".to_string(),
+                        template: serde_json::json!({
+                            "app": "yetii",
+                            "event": "{{event}}",
+                            "query": "{{query_name}}",
+                            "status": "{{status}}",
+                            "rows_read": "{{rows_read}}",
+                            "pages_read": "{{pages_read}}",
+                            "batches_sent": "{{batches_sent}}",
+                            "error": "{{error}}",
+                            "occurred_at": "{{occurred_at}}"
+                        }),
+                    }),
+                    response: Some(NotificationResponseConfig {
+                        success_codes: vec![200, 201, 202, 204],
+                    }),
+                    retry: Some(NotificationRetryConfig {
+                        attempts: Some(3),
+                        delay_seconds: Some(5),
+                        backoff: Some("exponential".to_string()),
+                        timeout_seconds: Some(30),
+                    }),
+                }],
             }),
         }),
         environments: None,

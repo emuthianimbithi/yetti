@@ -2,11 +2,12 @@ use super::run;
 use crate::cli::Yetii;
 use crate::config;
 use crate::config::execution_config::SchedulerConfig;
+use crate::config::monitor_config::NotificationEventKind;
 use crate::config::query_config::QueryConfig;
 use crate::config::schedule_config::normalized_cron;
-use crate::monitoring::{self, NotificationEvent};
+use crate::monitoring;
+use crate::notifications::{self, NotificationEvent};
 use anyhow::{Context, Result, bail};
-use chrono::Utc;
 use std::collections::HashSet;
 use std::fs::{OpenOptions, read_to_string, remove_file};
 use std::path::Path;
@@ -129,10 +130,12 @@ async fn run_foreground(pid_file: &str) -> Result<String> {
         "Yetii daemon started"
     );
     monitoring::set_ready(true);
+    notify_daemon_lifecycle(NotificationEventKind::DaemonStarted).await;
 
     shutdown_signal().await?;
     tracing::info!("shutdown signal received");
     monitoring::set_shutting_down();
+    notify_daemon_lifecycle(NotificationEventKind::DaemonStopping).await;
     let mut scheduler = scheduler;
     scheduler
         .shutdown()
@@ -212,21 +215,38 @@ async fn notify_scheduled_failure(query_name: &str, error: &str, duration: std::
         };
         config.monitoring.clone()
     };
-    let event = NotificationEvent {
-        success: false,
-        query: query_name.to_string(),
-        rows_read: 0,
-        pages_read: 0,
-        batches_sent: 0,
-        duration_ms: duration.as_millis().min(u64::MAX as u128) as u64,
-        error: Some(error.to_string()),
-        occurred_at: Utc::now(),
-    };
-    if let Err(notification_error) = monitoring::notify(monitoring_config.as_ref(), &event).await {
+    let event = NotificationEvent::query_outcome(
+        query_name,
+        false,
+        Some(error.to_string()),
+        0,
+        0,
+        0,
+        duration,
+    );
+    if let Err(notification_error) = notifications::notify(monitoring_config.as_ref(), &event).await
+    {
         tracing::warn!(
             query = %query_name,
             error = %notification_error,
             "scheduled failure notification failed"
+        );
+    }
+}
+
+async fn notify_daemon_lifecycle(event_kind: NotificationEventKind) {
+    let monitoring_config = {
+        let Ok(config) = config::get_config() else {
+            return;
+        };
+        config.monitoring.clone()
+    };
+    let event = NotificationEvent::daemon_lifecycle(event_kind);
+    if let Err(notification_error) = notifications::notify(monitoring_config.as_ref(), &event).await
+    {
+        tracing::warn!(
+            error = %notification_error,
+            "daemon lifecycle notification failed"
         );
     }
 }
