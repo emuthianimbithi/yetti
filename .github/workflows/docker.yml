@@ -57,13 +57,14 @@ jobs:
 
       - name: Smoke-test config validation
         run: |
+          test -f "$PWD/examples/docker-compose/yetii.yaml"
           docker run --rm \
-            -v "$PWD/examples/docker-compose/yetii.yaml:/etc/yetii/yetii.yaml:ro" \
+            --mount "type=bind,source=$PWD/examples/docker-compose/yetii.yaml,target=/etc/yetii/yetii.yaml,readonly" \
             -e ERP_PASSWORD=yetii \
             -e API_TOKEN=smoke-token \
             yetii:test check-config
           docker run --rm \
-            -v "$PWD/examples/docker-compose/yetii.yaml:/etc/yetii/yetii.yaml:ro" \
+            --mount "type=bind,source=$PWD/examples/docker-compose/yetii.yaml,target=/etc/yetii/yetii.yaml,readonly" \
             -e ERP_PASSWORD=yetii \
             -e API_TOKEN=smoke-token \
             yetii:test setup --check-only

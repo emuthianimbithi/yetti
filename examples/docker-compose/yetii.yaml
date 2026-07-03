@@ -1,0 +1,86 @@
+version: "1.0.0"
+name: docker-compose-smoke
+description: End-to-end Docker Compose smoke test for Yetii.
+
+databases:
+  - name: smoke_postgres
+    type: postgres
+    driver: PostgreSQL Unicode
+    host: postgres
+    port: 5432
+    database: yetii
+    schema: public
+    auth:
+      username: yetii
+      password: ${ERP_PASSWORD}
+    pool:
+      max_connections: 1
+      timeout_seconds: 30
+      retry_attempts: 1
+
+queries:
+  - name: orders_sync
+    description: Send seeded orders to the mock HTTP receiver.
+    enabled: true
+    database: smoke_postgres
+    query:
+      sql: |
+        SELECT id, customer_name, total_amount, updated_at
+        FROM orders
+        ORDER BY id
+      parameters: null
+      validation: null
+    transform:
+      enabled: true
+      mappings:
+        id: order_id
+        customer_name: customer
+        total_amount: total
+        updated_at: updated_at
+      filters: []
+      conversions: null
+      group_by: null
+    endpoint:
+      url: http://mock-receiver:3000/orders
+      method: POST
+      auth:
+        type: bearer
+        token: ${API_TOKEN}
+      headers:
+        X-Source: yetii-compose-smoke
+      request:
+        format: json
+        batch_size: 100
+        timeout_seconds: 30
+        retry_attempts: 2
+        retry_delay_seconds: 1
+        retry_backoff: fixed
+      response:
+        success_codes: [200, 201, 202, 204]
+        handle_duplicates: skip
+
+execution:
+  mode: sequential
+  global_timeout_minutes: 5
+  state_management:
+    enabled: true
+    state_file: /var/lib/yetii/yetii_state.json
+    backup_states: 2
+  scheduler:
+    enabled: true
+    max_concurrent_jobs: 1
+    job_timeout_minutes: 5
+    missed_job_policy: skip
+
+monitoring:
+  enabled: true
+  health_check:
+    enabled: true
+    endpoint: /health
+    port: 8080
+  metrics:
+    enabled: true
+    endpoint: http://127.0.0.1:9090/metrics
+    interval_seconds: 30
+  notifications:
+    enabled: false

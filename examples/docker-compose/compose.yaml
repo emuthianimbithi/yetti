@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: yetii
+      POSTGRES_PASSWORD: yetii
+      POSTGRES_DB: yetii
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yetii -d yetii"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mock-receiver:
+    build: ./mock-receiver
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  yetii:
+    build: ../..
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-receiver:
+        condition: service_healthy
+    volumes:
+      - ./yetii.yaml:/etc/yetii/yetii.yaml:ro
+      - yetii-state:/var/lib/yetii
+    environment:
+      ERP_PASSWORD: yetii
+      API_TOKEN: smoke-token
+    command: ["run", "--query", "orders_sync"]
+
+volumes:
+  yetii-state:
